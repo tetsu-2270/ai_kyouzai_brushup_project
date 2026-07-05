@@ -1,6 +1,7 @@
 # 02 アーキテクチャ設計
 
 > 本ドキュメントは現状実装（Phase 1〜9）に合わせて更新済みです。
+> `output/`配下のディレクトリ構成（`editable/`/`rendered/`/`canva/`/`exports/`/`compat/`）・editable中間ファイルの扱い・source情報の扱いは、Phase 9.2までに確定したプロジェクト共通設計ルールです。詳細は[`docs/04_output_spec.md`](04_output_spec.md)「プロジェクト標準output構成」、要約は[`CLAUDE_RULES.md`](../CLAUDE_RULES.md)「プロジェクト設計ルール」を参照してください。今後のPhaseでこれらを変更しない前提で作業する場合は、その旨をPhase指示文で明示してください。
 
 ## 全体構成
 

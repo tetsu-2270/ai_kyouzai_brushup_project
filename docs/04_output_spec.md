@@ -2,6 +2,31 @@
 
 > 本ドキュメントは出力仕様（`lesson_pages.json`のスキーマ、各派生出力の生成元・構成）に加えて、それらを生成するCLIコマンドの使い方（`--mode`/`--plan-output`/`review-report`等）も含む、**CLI仕様・出力仕様を含む現行仕様書**です。ファイル名は歴史的経緯で`04_output_spec.md`のままですが、内容としてはCLIコマンドの入出力仕様書を兼ねています。他ドキュメントから参照する際は本ファイル（`docs/04_output_spec.md`）を正としてください（`04_cli_spec.md`という名前のファイルは存在しません）。
 
+## プロジェクト標準output構成（Phase 9.2時点で確定・共通設計ルール）
+
+**Phase 9.2までに確定した、このプロジェクトの共通設計ルールです。** [`CLAUDE_RULES.md`](../CLAUDE_RULES.md)「プロジェクト設計ルール」にも同内容の要約があります。今後のPhaseでこのルールを変更する場合は、理由と影響範囲を説明して承認を得てから変更してください。それ以外の場合、以下は今後のPhase作業でも維持される前提として参照してください。
+
+```text
+output/
+  editable/
+    lesson_pages.json      # 正式な編集対象（再生成時にユーザーが編集するのはここのみ）
+  rendered/
+    page_NNN.png           # 正式な完成画像
+  canva/
+    canva_design.md        # 正式なCanva指示書（オプション出力。主outputではない）
+  exports/
+    material.md / .docx / .pdf / .pptx   # 正式な完成output
+  compat/
+    lesson_pages.json / canva_design.md / brushup.md / brushup.docx / brushup.pdf
+                            # Phase 8以前の旧仕様との互換用output。新規利用では通常参照しない
+```
+
+- **output構成**: `editable/`=再生成時の編集対象、`rendered/`=完成画像、`canva/`=正式なCanva指示書、`exports/`=正式な完成output、`compat/`=旧仕様互換用（`--no-compat-output`で無効化可）。`output_dir`直下には通常ユーザーが使う完成outputを置かない（`scenario/`/`review_report.md`/`imported_pages.json`/`assets/`は役割重複が無いため直下のまま）。
+- **editable中間ファイルの扱い**: 完成画像・PDF・DOCX・PPTXを直接編集するのではなく、`output/editable/lesson_pages.json`を編集→`regenerate`→`rendered/`/`exports/`を再生成する。
+- **source情報の扱い**: 元資料由来の画像・ページ画像・source assetsを落とさない。PDF/PPTX/画像から取り込んだ元画像・ページ画像は可能な限り`source_image`/`source_assets`として保持する。`source_page_no`は内部メタデータとして保持し、通常は完成outputに表示しない（確認したい場合は`review-report`を使う）。
+
+以降の各節は、この標準構成の詳細仕様（生成条件・スキーマ・CLIオプション等）を記載する。
+
 ## 元資料の自動取り込み（`import-source` / `build-all`）
 
 作成者向けの主導線は、元資料（画像/PDF/PPTX）を`input/source/`に置いて`build-all`コマンドを実行することである（詳細は`docs/08_user_acceptance_test.md`、README「クイックスタート（作成者向け）」を参照）。`imported_pages.json`/`lesson_pages.json`はいずれもシステムが自動生成する中間ファイルであり、**作成者が手作業で作るものではない**。

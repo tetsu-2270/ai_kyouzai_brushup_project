@@ -147,6 +147,65 @@ Claude Code本体の権限確認が出る可能性がある場合（例: Bashで
 - 元教材の意図を無視して文章を大きく改変しない。
 - Canvaで再現できないレイアウトを前提にしない。
 
+## プロジェクト設計ルール（output構成・editable中間ファイル・source情報の扱い）
+
+Phase 9.2までに確定した、このプロジェクトの共通設計ルールです。**今後のPhaseで変更する場合は、「基本方針」のとおり理由と影響範囲を説明して承認を得てから変更してください。** 詳細な仕様は[`docs/04_output_spec.md`](docs/04_output_spec.md)を正とし、ここではプロジェクト標準として要点のみ固定化します。
+
+### 1. output構成
+
+`build-all`が生成する`output/`配下は、以下の5ディレクトリに役割を分ける。
+
+```text
+output/
+  editable/
+    lesson_pages.json      # 正式な編集対象（再生成時にユーザーが編集するのはここのみ）
+  rendered/
+    page_NNN.png           # 正式な完成画像
+  canva/
+    canva_design.md        # 正式なCanva指示書（オプション出力。主outputではない）
+  exports/
+    material.md / .docx / .pdf / .pptx   # 正式な完成output
+  compat/
+    lesson_pages.json / canva_design.md / brushup.md / brushup.docx / brushup.pdf
+                            # Phase 8以前の旧仕様との互換用output。新規利用では通常参照しない
+```
+
+各ディレクトリの役割:
+
+- `editable/`: 再生成時にユーザーが編集する正式な中間output。
+- `rendered/`: 配布・確認用の完成画像。
+- `canva/`: 正式なCanva指示書。数ある完成output形式の一つであり、主outputではない。
+- `exports/`: 正式な完成output（Markdown/DOCX/PDF/PPTX）。
+- `compat/`: Phase 8以前の旧仕様との互換用output。`--no-compat-output`で生成自体を無効化できる。新規利用では通常参照しない。
+- `output_dir`直下には、通常ユーザーが使う完成outputを置かない（`scenario/`・`review_report.md`・`imported_pages.json`・`assets/`は正式outputとの役割重複が無いため直下のまま）。
+
+### 2. editable中間ファイルの扱い
+
+`output/editable/lesson_pages.json`は、ユーザーが編集する正式な中間outputである。**完成画像・PDF・DOCX・PPTXを直接編集するのではなく**、以下の運用をプロジェクト標準とする。
+
+```text
+output/editable/lesson_pages.json を編集
+↓
+regenerate
+↓
+rendered/ や exports/ を再生成
+```
+
+### 3. source情報の扱い
+
+- 元資料由来の画像・ページ画像・source assetsを落とさない。PDF・PPTX・画像などから取り込んだ元画像・ページ画像は、可能な限り`source_image`/`source_assets`（既存設計）として保持する。
+- `source_page_no`は内部メタデータとして保持する。通常、購入者・受講者向けの完成output（`rendered/`・`exports/`・`canva/`・DOCX/PDF/動画シナリオ）には表示しない。制作者が確認したい場合は`review-report`コマンドを使う。
+
+### 4. 今後のPhase指示文での参照方法
+
+今後のPhase指示文では、このルールを毎回書き下す代わりに、以下のように短く参照してよい。
+
+```text
+CLAUDE_RULES.md および docs/04_output_spec.md に定義済みの
+output構成・editable中間ファイル・source情報の扱いを維持してください。
+今回のPhaseでは、それらの既存設計を変更しないでください。
+```
+
 ## 重要な前提
 
 このシステムの目的は、教材画像・教材ページの内容をもとに、以下を作ることです。

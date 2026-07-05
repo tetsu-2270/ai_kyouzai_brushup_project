@@ -25,6 +25,7 @@
 - **「このプロジェクトはどこまで終わっているか」を知りたい** → `05_implementation_tasks.md` と `python3 -m pytest -q` の実行結果
 - **元資料（画像/PDF/PPTX）があり、実際の教材素材で試したい** → `08_user_acceptance_test.md`（`build-all`の手順）と`feedback_template.md`（結果の記録）
 - **元資料が無く、要件定義だけから新規に教材を作りたい（新規構築）** → `README.md`「`lesson-pages`の3モード（v2.0）」の`generate`モード（`build-all`は元資料前提のため対象外）
+- **output構成・editable中間ファイル・source情報の扱いという共通設計ルールを確認したい** → `04_output_spec.md`「プロジェクト標準output構成（Phase 9.2時点で確定・共通設計ルール）」（要約は`CLAUDE_RULES.md`「プロジェクト設計ルール」にもある）
 - **過去のレビュー経緯を知りたい** → `99_implementation_review_brief.md`（ただし現行仕様の正ではない点に注意）
 
 ## `05_*` と `99_*` の運用ルール（重要）

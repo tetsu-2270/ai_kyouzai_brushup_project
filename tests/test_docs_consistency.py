@@ -182,3 +182,36 @@ def test_docs_do_not_claim_brushup_is_generated_at_output_root_by_build_all():
     """build-allの出力としてbrushup.*がoutput_dir直下に生成される、という古い記述が残っていないことを確認する。"""
     text = _read(REPO_ROOT / "docs" / "08_user_acceptance_test.md")
     assert "brushup.md`・`brushup.docx`・`brushup.pdf` | 同名重複が無いため引き続き" not in text
+
+
+# --- 共通設計ルールの明文化（Phase 9.2完了後） -----------------------------------
+
+
+def test_claude_rules_documents_common_design_rules():
+    """CLAUDE_RULES.mdにプロジェクト共通設計ルール（output構成/editable/source情報）が
+    明記されていることを確認する。"""
+    text = _read(REPO_ROOT / "CLAUDE_RULES.md")
+    assert "プロジェクト設計ルール" in text
+    assert "output/editable/lesson_pages.json" in text
+    assert "source_page_no" in text
+    assert "output/compat/" in text or "compat/" in text
+
+
+def test_docs_04_has_canonical_standard_output_structure_section():
+    """docs/04_output_spec.mdに、共通設計ルールの正となる「プロジェクト標準output構成」節が
+    存在することを確認する。"""
+    text = _read(REPO_ROOT / "docs" / "04_output_spec.md")
+    assert "プロジェクト標準output構成" in text
+
+
+def test_docs_02_and_docs_readme_point_to_common_design_rules():
+    """docs/02_architecture.md・docs/README.mdから共通設計ルールへの参照があることを確認する。"""
+    for path in (REPO_ROOT / "docs" / "02_architecture.md", REPO_ROOT / "docs" / "README.md"):
+        text = _read(path)
+        assert "プロジェクト標準output構成" in text or "プロジェクト設計ルール" in text
+
+
+def test_claude_rules_provides_short_reference_wording_for_future_phases():
+    """今後のPhase指示文で使える短い参照文言がCLAUDE_RULES.mdに含まれていることを確認する。"""
+    text = _read(REPO_ROOT / "CLAUDE_RULES.md")
+    assert "今後のPhase指示文" in text
