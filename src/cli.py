@@ -62,16 +62,20 @@ def resolve_output_format(output_format: str, input_kind: str) -> str:
     return output_format
 
 
-def _generate_formatted_outputs(document: LessonDocument, output_dir: Path, resolved_format: str) -> None:
+def _generate_formatted_outputs(
+    document: LessonDocument, output_dir: Path, resolved_format: str, font_path: str | None = None
+) -> None:
     """editable/lesson_pages.json相当の正データから、指定形式の完成outputを生成する。
 
     rendered/(画像)・canva/(Canva指示書)・exports/(PDF/PPTX/DOCX/Markdown)に出力する。
     「json」はeditable中間ファイル自体が対象のため、ここでは追加ファイルを生成しない。
+    font_pathは画像output(rendered/・PPTX内の画像)の日本語テキスト合成に使うフォントを明示指定する
+    （省略時は環境の日本語フォントを自動探索し、見つからなければ警告のうえPillow既定フォントを使う）。
     """
     needs_images = resolved_format in ("image", "pptx", "all")
     image_paths: list[Path] = []
     if needs_images:
-        image_paths = render_document_images(document, output_dir, output_dir / "rendered")
+        image_paths = render_document_images(document, output_dir, output_dir / "rendered", font_path=font_path)
 
     if resolved_format in ("pdf", "all"):
         write_pdf(output_dir / "exports" / f"{_EXPORT_BASENAME}.pdf", document)
@@ -92,6 +96,7 @@ def build_all(
     requirements_path: str | None = None,
     output_format: str = "same",
     compat_output: bool = True,
+    font_path: str | None = None,
 ) -> None:
     """元資料(画像/PDF/PPTX)から成果物一式を一括生成する（build-allコマンドの本体）。
 
@@ -107,6 +112,8 @@ def build_all(
     （`compat_output=False`で無効化できる。既定は有効＝Phase 8からの利用手順を大きく変えない）。
     `scenario/`/`review_report.md`は正式outputとの役割重複が無いため、従来通り`output_dir`
     直下に生成する。
+
+    font_pathは画像output(rendered/・PPTX内の画像)の日本語テキスト合成に使うフォントを明示指定する。
     """
     output_dir = Path(output_dir)
     assets_dir = output_dir / "assets"
@@ -128,21 +135,27 @@ def build_all(
     write_text(output_dir / "review_report.md", render_review_report(document))
 
     resolved_format = resolve_output_format(output_format, _detect_input_kind(input_path))
-    _generate_formatted_outputs(document, output_dir, resolved_format)
+    _generate_formatted_outputs(document, output_dir, resolved_format, font_path=font_path)
 
 
-def regenerate(input_path: str, output_format: str, output_dir: str | Path | None = None) -> None:
+def regenerate(
+    input_path: str,
+    output_format: str,
+    output_dir: str | Path | None = None,
+    font_path: str | None = None,
+) -> None:
     """editable中間ファイル（例: output/editable/lesson_pages.json）から成果物を再生成する。
 
     ユーザーがeditable中間ファイルを編集した後、完成画像・PDF・PPTX・DOCX・Canva指示書等を
     作り直すための導線。完成画像やPDFを直接編集するのではなく、この中間ファイルを編集して
-    再生成することを想定する。
+    再生成することを想定する。font_pathは画像output(rendered/・PPTX内の画像)の日本語テキスト
+    合成に使うフォントを明示指定する。
     """
     editable_path = Path(input_path)
     document = load_lesson_document(editable_path)
     resolved_output_dir = Path(output_dir) if output_dir else editable_path.resolve().parent.parent
     resolved_format = "all" if output_format == "same" else output_format
-    _generate_formatted_outputs(document, resolved_output_dir, resolved_format)
+    _generate_formatted_outputs(document, resolved_output_dir, resolved_format, font_path=font_path)
 
 
 def main() -> None:
@@ -187,6 +200,11 @@ def main() -> None:
         default=True,
         help="Phase 8互換output(output/compat/lesson_pages.json・canva_design.md・brushup.md・brushup.docx・brushup.pdf)を生成しない（既定は生成する）",
     )
+    build_all_parser.add_argument(
+        "--font-path",
+        default=None,
+        help="画像output(rendered//PPTX内画像)の日本語テキスト合成に使うフォントファイルのパス（省略時は環境の日本語フォントを自動探索）",
+    )
 
     regenerate_parser = subparsers.add_parser(
         "regenerate",
@@ -205,6 +223,11 @@ def main() -> None:
         "--output-dir",
         default=None,
         help="出力先ディレクトリ（省略時は--inputの2階層上。例: output/editable/lesson_pages.json → output/）",
+    )
+    regenerate_parser.add_argument(
+        "--font-path",
+        default=None,
+        help="画像output(rendered//PPTX内画像)の日本語テキスト合成に使うフォントファイルのパス（省略時は環境の日本語フォントを自動探索）",
     )
 
     lesson_pages_parser = subparsers.add_parser(
@@ -282,9 +305,12 @@ def main() -> None:
         if args.command == "import-source":
             run_import_source(args.input, args.output, args.assets_dir)
         elif args.command == "build-all":
-            build_all(args.input, args.mode, args.output_dir, args.requirements, args.output_format, args.compat_output)
+            build_all(
+                args.input, args.mode, args.output_dir, args.requirements,
+                args.output_format, args.compat_output, args.font_path,
+            )
         elif args.command == "regenerate":
-            regenerate(args.input, args.output_format, args.output_dir)
+            regenerate(args.input, args.output_format, args.output_dir, args.font_path)
         elif args.command == "lesson-pages":
             document, plan = build_lesson_pages(args.mode, args.input, args.requirements)
             write_lesson_pages_json(args.output, document)

@@ -24,7 +24,8 @@ src/
   canva_renderer.py          # lesson_pages.jsonからcanva_design.md生成（元画像/参考画像の参照表示を含む。オプション出力）
   docx_renderer.py           # lesson_pages.jsonからDOCX生成
   pdf_renderer.py            # lesson_pages.jsonからPDF生成
-  image_renderer.py           # lesson_pages.jsonから完成画像(rendered/page_NNN.png)を生成（Phase 9・source_imageがあればそれを採用、無ければ簡易合成）
+  image_renderer.py           # lesson_pages.jsonから完成画像(rendered/page_NNN.png)を生成（Phase 9・source_imageがあればそれを採用、無ければ簡易合成）。
+                              # 日本語フォント探索(resolve_font_path)・--font-path対応・フォント未検出時の警告を実装（Phase 10）
   pptx_export_renderer.py     # lesson_pages.json+完成画像からPPTX(exports/*.pptx)を生成（Phase 9・1ページ=1スライドの簡易構成）
   scenario_renderer.py       # lesson_pages.jsonから動画生成用シナリオ4形式を生成
   env_config.py               # .env読み込み共通ユーティリティ

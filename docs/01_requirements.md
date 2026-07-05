@@ -47,8 +47,8 @@ AI教材ブラッシュアップシステム
 | サブコマンド | 役割 | 区分 |
 |---|---|---|
 | `import-source` | 元資料（画像/PDF/PPTX）からテキスト・画像を自動取り込み、`imported_pages.json`（pages形式互換）+画像アセットを生成 | 必須機能 |
-| `build-all` | `import-source`→`lesson-pages`→完成output生成を一括実行（`--mode proofread\|restructure`、`--requirements`、`--output-format`）。作成者向けの主導線 | 必須機能 |
-| `regenerate` | `output/editable/lesson_pages.json`（編集済み中間ファイル）から完成outputを再生成（`--output-format`） | 必須機能 |
+| `build-all` | `import-source`→`lesson-pages`→完成output生成を一括実行（`--mode proofread\|restructure`、`--requirements`、`--output-format`、`--font-path`）。作成者向けの主導線 | 必須機能 |
+| `regenerate` | `output/editable/lesson_pages.json`（編集済み中間ファイル）から完成outputを再生成（`--output-format`、`--font-path`） | 必須機能 |
 | `lesson-pages` | 正データ`lesson_pages.json`を生成（`--mode proofread\|restructure\|generate`、`--requirements`、`--plan-output`） | 必須機能 |
 | `review-report` | `lesson_pages.json`の`role`/`source_page_no`を制作者確認用Markdownに整理 | 必須機能（制作者向け補助） |
 | `generate` | `lesson_pages.json`から教材ブラッシュアップ設計書(`brushup.md`)を生成 | 必須機能 |
@@ -107,4 +107,5 @@ AI教材ブラッシュアップシステム
 - `requirements.json`の`page_count`の実反映（現状はバリデーションのみ行い、`restructure`/`generate`のページ数制御には使用しない。将来拡張用のフィールド）
 - introの`source_page_no`拡大・3ページ以上の連鎖merge・`--plan-input`（Phase 7調査で候補に挙がったが未着手。詳細は`docs/05_implementation_tasks.md`Phase 7参照）
 - PPTX exportの高度なレイアウト再現（1ページ=1スライドに完成画像を配置する簡易構成のみ対応。複雑な図形・アニメーション等の再現は対象外）
-- `source_image`が無いページ（`generate`モード等）の画像output合成におけるデザイン性の作り込み（title/summary/本文を描画する簡易実装。日本語フォントが見つからない環境では文字化けし得る）
+- `source_image`が無いページ（`generate`モード等）の画像output合成における高度なデザインエンジン化（Phase 10で読みやすさ・折り返し・打ち切り表示・ページ番号表示等の最低限の品質改善は実施済み。装飾性の高いレイアウト自体は対象外）
+- `--font-path`を設定ファイル化する機能（現状はCLI引数のみ）

@@ -98,7 +98,20 @@ python3 -m src.cli build-all \
 python3 -m src.cli regenerate --input output/editable/lesson_pages.json --output-format image
 ```
 
-編集できる主な項目は`title`/`summary`/`body`/`layout_instruction`/`notes`です（`image_text`/`canva_prompt`/`video_scene`はこれらから自動算出されるため直接編集する必要はありません）。`--output-dir`を省略すると、`--input`の2階層上（`output/editable/lesson_pages.json`なら`output/`）に再生成されます。
+編集できる主な項目は`title`/`summary`/`body`/`layout_instruction`/`notes`です（`image_text`/`canva_prompt`/`video_scene`はこれらから自動算出されるため直接編集する必要はありません）。`--output-dir`を省略すると、`--input`の2階層上（`output/editable/lesson_pages.json`なら`output/`）に再生成されます。編集してよい項目・編集しない方がよい項目の一覧、`regenerate`の具体例（PDF/Canva指示書/全形式/日本語フォント指定）は[`docs/09_editable_regenerate_guide.md`](09_editable_regenerate_guide.md)を参照してください。
+
+`source_image`が無いページの画像output（`generate`モード等）で日本語が文字化けする場合は、`--font-path`で日本語対応フォントを明示指定してください。
+
+```bash
+python3 -m src.cli regenerate --input output/editable/lesson_pages.json --output-format image --font-path /path/to/font.ttc
+```
+
+環境に日本語フォントが見つからない場合、`build-all`/`regenerate`実行時に以下の警告が表示されます（黙って文字化けさせることはありません）。
+
+```text
+WARNING: Japanese font was not found. Rendered images may contain garbled Japanese text.
+Use --font-path to specify a Japanese font.
+```
 
 ## 2. モードごとの設計思想
 

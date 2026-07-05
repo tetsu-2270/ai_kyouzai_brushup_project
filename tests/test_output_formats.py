@@ -420,3 +420,157 @@ def test_regenerate_works_for_generate_mode_document_without_source_image(tmp_pa
     canva_text = (output_dir / "canva" / "canva_design.md").read_text(encoding="utf-8")
     assert "元画像:" not in canva_text
     assert "参考画像:" not in canva_text
+
+
+# --- Phase 10: --font-path / フォント未検出警告 ----------------------------------
+
+
+def test_build_all_accepts_font_path_option(tmp_path, monkeypatch):
+    """build-all --font-path が受け付けられ、指定フォントで画像outputが生成されることを確認する。"""
+    from src.image_renderer import resolve_font_path
+
+    font_path = resolve_font_path(None)
+    if font_path is None:
+        return  # 実行環境に日本語フォントが無い場合はスキップ相当
+
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir, count=1)
+    output_dir = tmp_path / "output"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "build-all",
+            "--input", str(source_dir),
+            "--mode", "proofread",
+            "--output-dir", str(output_dir),
+            "--output-format", "image",
+            "--font-path", font_path,
+        ],
+    )
+    main()
+
+    assert (output_dir / "rendered" / "page_001.png").exists()
+
+
+def test_build_all_font_path_reaches_image_renderer(tmp_path, monkeypatch):
+    """--font-pathで指定したパスが実際にimage_rendererへ渡ることを確認する（呼び出し引数を検証）。"""
+    import src.cli as cli_module
+
+    captured = {}
+    original = cli_module.render_document_images
+
+    def _spy(document, output_dir, rendered_dir, font_path=None):
+        captured["font_path"] = font_path
+        return original(document, output_dir, rendered_dir, font_path=font_path)
+
+    monkeypatch.setattr(cli_module, "render_document_images", _spy)
+
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir, count=1)
+    output_dir = tmp_path / "output"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "build-all",
+            "--input", str(source_dir),
+            "--mode", "proofread",
+            "--output-dir", str(output_dir),
+            "--output-format", "image",
+            "--font-path", "/dummy/font/path.ttc",
+        ],
+    )
+    try:
+        main()
+    except SystemExit:
+        pass  # 存在しないダミーパスなのでエラー終了するが、渡された引数の検証が目的
+    assert captured.get("font_path") == "/dummy/font/path.ttc"
+
+
+def test_build_all_invalid_font_path_raises_clear_error(tmp_path, monkeypatch, capsys):
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir, count=1)
+    output_dir = tmp_path / "output"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "build-all",
+            "--input", str(source_dir),
+            "--mode", "proofread",
+            "--output-dir", str(output_dir),
+            "--output-format", "image",
+            "--font-path", "/no/such/font.ttc",
+        ],
+    )
+    try:
+        main()
+        assert False, "SystemExitが発生するはず"
+    except SystemExit as e:
+        assert e.code == 1
+    captured = capsys.readouterr()
+    assert "見つかりません" in captured.err
+
+
+def test_regenerate_accepts_font_path_option(tmp_path, monkeypatch):
+    """regenerate --font-path が受け付けられ、指定フォントで画像outputが再生成されることを確認する。"""
+    from src.image_renderer import resolve_font_path
+
+    font_path = resolve_font_path(None)
+    if font_path is None:
+        return  # 実行環境に日本語フォントが無い場合はスキップ相当
+
+    editable_path = tmp_path / "output" / "editable" / "lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages",
+            "--mode", "generate",
+            "--requirements", "examples/requirements_ai_instagram.json",
+            "--output", str(editable_path),
+        ],
+    )
+    main()
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "regenerate",
+            "--input", str(editable_path),
+            "--output-format", "image",
+            "--font-path", font_path,
+        ],
+    )
+    main()
+
+    output_dir = editable_path.parent.parent
+    assert len(list((output_dir / "rendered").glob("page_*.png"))) > 0
+
+
+def test_build_all_warns_when_synthesizing_text_without_japanese_font(tmp_path, monkeypatch, capsys):
+    """source_imageが無いページの画像合成が必要なのに日本語フォントが無い場合、警告が出ることを確認する。"""
+    import src.image_renderer as image_renderer_module
+
+    monkeypatch.setattr(image_renderer_module, "_JAPANESE_FONT_CANDIDATES", ())
+
+    editable_path = tmp_path / "output" / "editable" / "lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages",
+            "--mode", "generate",
+            "--requirements", "examples/requirements_ai_instagram.json",
+            "--output", str(editable_path),
+        ],
+    )
+    main()
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "regenerate", "--input", str(editable_path), "--output-format", "image"],
+    )
+    main()
+
+    captured = capsys.readouterr()
+    assert "WARNING" in captured.err
+    # 警告が出ても画像自体は生成され、処理が継続していることを確認する。
+    output_dir = editable_path.parent.parent
+    assert len(list((output_dir / "rendered").glob("page_*.png"))) > 0

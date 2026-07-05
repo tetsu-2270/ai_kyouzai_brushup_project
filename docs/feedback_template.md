@@ -33,6 +33,7 @@
 | 13 | `source_page_no`・`role`など内部管理情報が配布物（DOCX/PDF/画像/Canva指示書）に出ていないか | 全完成output | | |
 | 14 | 元画像・スライド画像への参照（「元画像: assets/...」）が各ページで正しく出ているか | `canva/canva_design.md` | | |
 | 15 | `editable/lesson_pages.json`を編集して`regenerate`した際、意図通り再生成されるか | `regenerate`実行後の完成output | | |
+| 16 | `source_image`が無いページの画像outputで日本語が文字化けしていないか（文字化けする場合は`--font-path`を試したか） | `rendered/page_NNN.png` | | |
 
 ## 総合評価
 

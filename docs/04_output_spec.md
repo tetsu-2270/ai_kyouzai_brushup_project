@@ -86,7 +86,24 @@ Phase 8時点では`output_dir`直下に`lesson_pages.json`/`canva_design.md`/`b
 `src/image_renderer.py`の`render_document_images()`が生成する。各ページについて、
 
 - `source_image`が設定されている場合: その元画像をそのまま`rendered/page_NNN.png`として採用する（教材に限らず、チラシ・SNS投稿画像等、元のビジュアルをそのまま活かす用途を想定）。
-- `source_image`が無い場合（`generate`モード等）: `title`/`summary`/本文を描画した簡易画像を合成する。日本語フォントが利用できる環境（例: macOSの`ヒラギノ角ゴシック`）ではその字形で描画し、見つからない環境ではPillow既定フォントにフォールバックする（文字化けし得るが画像生成自体は継続する）。
+- `source_image`が無い場合（`generate`モード等）: ページ番号ヘッダー・タイトル・区切り線・`summary`・本文（折り返し・打ち切り表示付き）・フッターのページ番号を描画した簡易画像を、全ページ共通のレイアウトで合成する（Phase 10で読みやすさを改善）。
+
+#### 日本語フォントの解決（`--font-path`。Phase 10）
+
+`source_image`が無いページのテキスト合成には日本語フォントが必要である。`src/image_renderer.py`の`resolve_font_path()`が以下の優先順位でフォントを解決する。
+
+1. `--font-path`で明示指定されたパス（存在しない/読み込めない場合は`ValueError`で即座にエラー終了する。黙って別のフォントにフォールバックしない）。
+2. 環境の日本語フォント候補を順に探索（macOSの`ヒラギノ角ゴシック`各種、Linuxの`Noto Sans CJK`等、Windowsの`游ゴシック`/`メイリオ`等。実在し読み込めることを確認したものだけを採用）。
+3. 候補が1つも見つからない場合は`None`を返す。
+
+`render_document_images()`は、テキスト合成が必要なページ（`source_image`が無いページ）が存在するにもかかわらずフォントが解決できなかった場合、**黙って文字化けリスクを抱えたまま処理を続けず**、標準エラー出力に警告を1回表示したうえで処理を継続する（Pillow既定フォントにフォールバックする。既定フォントは日本語グリフを持たないため文字化けし得る）。
+
+```bash
+python3 -m src.cli build-all --input input/source --output-format image --font-path "/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc"
+python3 -m src.cli regenerate --input output/editable/lesson_pages.json --output-format image --font-path /path/to/font.ttc
+```
+
+`--font-path`は`build-all`・`regenerate`の両方で指定できる。
 
 ### PPTX export（`exports/material.pptx`）
 
@@ -99,6 +116,8 @@ python3 -m src.cli regenerate --input output/editable/lesson_pages.json --output
 ```
 
 `output/editable/lesson_pages.json`（またはユーザーが編集した同形式のJSON）を読み込み、`--output-format`で指定した完成outputを再生成する。`--output-dir`を省略した場合、`--input`の2階層上（`output/editable/lesson_pages.json`なら`output/`）を出力先とする。`--output-format`の既定値は`all`（`same`が指定された場合も`all`として扱う。再生成時は元の入力形式という概念が無いため）。
+
+`output/editable/lesson_pages.json`の編集してよい項目・編集しない方がよい項目、`regenerate`の具体例（画像/PDF/Canva指示書/全形式/日本語フォント指定）は[`docs/09_editable_regenerate_guide.md`](09_editable_regenerate_guide.md)を参照。
 
 ## 正データと派生出力の関係
 `lesson_pages.json`（`docs/03_data_format.md`とは別スキーマ）が正データであり、以下の出力はすべてこのファイルから派生生成される。`brushup.md`と`canva_design.md`が同じ`lesson_pages.json`から生成されるため、ページ番号・タイトルは常に一致する。

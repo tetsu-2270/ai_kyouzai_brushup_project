@@ -215,3 +215,58 @@ def test_claude_rules_provides_short_reference_wording_for_future_phases():
     """今後のPhase指示文で使える短い参照文言がCLAUDE_RULES.mdに含まれていることを確認する。"""
     text = _read(REPO_ROOT / "CLAUDE_RULES.md")
     assert "今後のPhase指示文" in text
+
+
+# --- Phase 10: 画像output品質・日本語フォント・再生成編集ガイドの改善 ------------------
+
+
+def test_editable_regenerate_guide_exists_and_is_indexed():
+    """docs/09_editable_regenerate_guide.mdが存在し、docs/README.mdから参照されていることを確認する。"""
+    guide_path = REPO_ROOT / "docs" / "09_editable_regenerate_guide.md"
+    assert guide_path.exists()
+    docs_readme_text = _read(REPO_ROOT / "docs" / "README.md")
+    assert "09_editable_regenerate_guide.md" in docs_readme_text
+
+
+def test_editable_regenerate_guide_lists_editable_and_non_editable_fields():
+    text = _read(REPO_ROOT / "docs" / "09_editable_regenerate_guide.md")
+    for editable_field in ("title", "summary", "body", "layout_instruction", "notes"):
+        assert f"`{editable_field}`" in text
+    for non_editable_field in ("source_page_no", "source_image", "source_assets"):
+        assert f"`{non_editable_field}`" in text
+
+
+def test_docs_explain_not_editing_completed_outputs_directly():
+    """完成画像・PDFを直接編集せず、editable/lesson_pages.jsonを編集して再生成する方針が
+    README/docs/09に明記されていることを確認する。"""
+    for path in (REPO_ROOT / "README.md", REPO_ROOT / "docs" / "09_editable_regenerate_guide.md"):
+        text = _read(path)
+        assert "直接編集" in text
+
+
+def test_docs_provide_font_path_usage_examples():
+    """--font-pathの使用例がREADME/docs/04/08/09に含まれていることを確認する。"""
+    for path in (
+        REPO_ROOT / "README.md",
+        REPO_ROOT / "docs" / "04_output_spec.md",
+        REPO_ROOT / "docs" / "08_user_acceptance_test.md",
+        REPO_ROOT / "docs" / "09_editable_regenerate_guide.md",
+    ):
+        text = _read(path)
+        assert "--font-path" in text
+
+
+def test_docs_explain_missing_japanese_font_warning():
+    """日本語フォントが見つからない場合の警告についてREADME/docs/04/08/09で説明されていることを確認する。"""
+    for path in (
+        REPO_ROOT / "docs" / "04_output_spec.md",
+        REPO_ROOT / "docs" / "08_user_acceptance_test.md",
+        REPO_ROOT / "docs" / "09_editable_regenerate_guide.md",
+    ):
+        text = _read(path)
+        assert "WARNING" in text or "文字化け" in text
+
+
+def test_docs_04_documents_font_resolution_functions():
+    text = _read(REPO_ROOT / "docs" / "04_output_spec.md")
+    assert "resolve_font_path" in text

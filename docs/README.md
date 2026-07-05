@@ -13,6 +13,7 @@
 | [`06_claude_code_workflow.md`](06_claude_code_workflow.md) | Claude Code運用手順 | ZIP展開〜実装〜確認までの一般的な進め方 |
 | [`07_api_integration_design.md`](07_api_integration_design.md) | 将来のAPI連携設計メモ | OCR/ブラッシュアップ/Canva設計のAPI化構想（未実装・設計のみ） |
 | [`08_user_acceptance_test.md`](08_user_acceptance_test.md) | **実利用テスト手順（Phase 8〜9・作成者向けの主導線）** | 元資料（画像/PDF/PPTX）の置き方、`build-all`の実行手順・`--output-format`の選び方、`editable/lesson_pages.json`の再生成（`regenerate`）、確認順序、評価観点 |
+| [`09_editable_regenerate_guide.md`](09_editable_regenerate_guide.md) | **editable編集・再生成ガイド（Phase 10）** | `output/editable/lesson_pages.json`の編集してよい項目・編集しない方がよい項目、`regenerate`の具体例、日本語フォント（`--font-path`）の指定方法・トラブルシューティング |
 | [`feedback_template.md`](feedback_template.md) | フィードバックシート（テンプレート） | 実利用テストの結果を記録するチェックリスト。コピーして使う |
 | [`99_implementation_review_brief.md`](99_implementation_review_brief.md) | 時点レビュー・スナップショット | Phase 1〜4完了時点（2026-07-04）の記録。以降更新しない運用ルールは同ファイル冒頭を参照 |
 | [`99_phase7_review_2026-07-05.md`](99_phase7_review_2026-07-05.md) | 時点レビュー・スナップショット | Phase 7（restructure品質改善・出力のMarkdown混入対策一式）完了時点（2026-07-05）の記録 |
@@ -26,6 +27,7 @@
 - **元資料（画像/PDF/PPTX）があり、実際の教材素材で試したい** → `08_user_acceptance_test.md`（`build-all`の手順）と`feedback_template.md`（結果の記録）
 - **元資料が無く、要件定義だけから新規に教材を作りたい（新規構築）** → `README.md`「`lesson-pages`の3モード（v2.0）」の`generate`モード（`build-all`は元資料前提のため対象外）
 - **output構成・editable中間ファイル・source情報の扱いという共通設計ルールを確認したい** → `04_output_spec.md`「プロジェクト標準output構成（Phase 9.2時点で確定・共通設計ルール）」（要約は`CLAUDE_RULES.md`「プロジェクト設計ルール」にもある）
+- **`output/editable/lesson_pages.json`を編集して再生成したい・日本語フォントの文字化けを直したい** → `09_editable_regenerate_guide.md`
 - **過去のレビュー経緯を知りたい** → `99_implementation_review_brief.md`（ただし現行仕様の正ではない点に注意）
 
 ## `05_*` と `99_*` の運用ルール（重要）
