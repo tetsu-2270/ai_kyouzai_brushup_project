@@ -157,3 +157,28 @@ def test_docs_state_canva_directory_is_the_sole_official_canva_output():
     for path in (REPO_ROOT / "README.md", REPO_ROOT / "docs" / "04_output_spec.md"):
         text = _read(path)
         assert "正式なCanva指示書は`output/canva/canva_design.md`のみ" in text or "正式なCanva指示書" in text
+
+
+# --- Phase 9.2: brushup系outputとexports系outputの役割重複整理 --------------------
+
+
+def test_docs_state_exports_is_the_sole_official_completed_output_location():
+    """正式な完成output(Markdown/DOCX/PDF/PPTX)はoutput/exports/のみであることが明記されていることを確認する。"""
+    for path in (REPO_ROOT / "README.md", REPO_ROOT / "docs" / "04_output_spec.md", REPO_ROOT / "docs" / "08_user_acceptance_test.md"):
+        text = _read(path)
+        assert "output/exports/material" in text
+    combined = _read(REPO_ROOT / "docs" / "04_output_spec.md") + _read(REPO_ROOT / "README.md")
+    assert "正式な完成output" in combined
+
+
+def test_docs_state_brushup_files_are_compat_only_and_not_referenced_for_new_use():
+    """brushup.*が後方互換専用であり、新規利用では参照しないことが明記されていることを確認する。"""
+    for path in (REPO_ROOT / "docs" / "04_output_spec.md", REPO_ROOT / "docs" / "08_user_acceptance_test.md"):
+        text = _read(path)
+        assert "compat/brushup" in text or "compat`配下" in text or "compat/`配下" in text
+
+
+def test_docs_do_not_claim_brushup_is_generated_at_output_root_by_build_all():
+    """build-allの出力としてbrushup.*がoutput_dir直下に生成される、という古い記述が残っていないことを確認する。"""
+    text = _read(REPO_ROOT / "docs" / "08_user_acceptance_test.md")
+    assert "brushup.md`・`brushup.docx`・`brushup.pdf` | 同名重複が無いため引き続き" not in text

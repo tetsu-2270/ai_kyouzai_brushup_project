@@ -83,7 +83,7 @@ AI教材ブラッシュアップシステム
 - **再生成用の編集可能な中間output（常に生成）**: `output/editable/lesson_pages.json`（正データと同内容。ユーザーが編集する対象）
 - 完成output（`--output-format`で選択。既定`same`は入力の性質に合わせる）:
   - 完成画像: `output/rendered/page_NNN.png`（正式なoutput形式の一つ。教材ページに限らずチラシ・SNS投稿画像等にも対応）
-  - PDF/PowerPoint(PPTX)/Word(DOCX)/Markdown: `output/exports/`配下
+  - PDF/PowerPoint(PPTX)/Word(DOCX)/Markdown: `output/exports/material.*`（**正式output**。後方互換コピーは`output/compat/brushup.md`/`brushup.docx`/`brushup.pdf`。`output_dir`直下には生成しない）
   - Canva向けレイアウト設計書: `output/canva/canva_design.md`（**数ある完成output形式の一つであり、主outputではない**。元資料由来のページは元画像・参考画像への参照を含む。後方互換コピーは`output/compat/canva_design.md`）
 - 正データ: `lesson_pages.json`（`output/editable/`配下が正式。`build-all`は後方互換のため`output/compat/`配下にも同内容を生成する。`--no-compat-output`で無効化可能。`output_dir`直下には重複生成しない）
 - 動画生成用シナリオ一式: `scenario.json` / `scenario.md` / `voicevox.txt` / `scene.json`

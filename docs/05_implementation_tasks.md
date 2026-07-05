@@ -154,3 +154,12 @@ Phase 9実装直後、`output/editable/lesson_pages.json`/`output/canva/canva_de
 - [x] `brushup.md`/`brushup.docx`/`brushup.pdf`/`scenario/`/`review_report.md`は同名重複が無いため、従来通り`output_dir`直下に生成する変更は加えていない
 - [x] ドキュメント更新（README.md/`docs/01_requirements.md`/`docs/02_architecture.md`/`docs/04_output_spec.md`/`docs/08_user_acceptance_test.md`）: 正式output（`editable/`・`canva/`）と後方互換output（`compat/`）の違いを明記
 - [x] テスト更新: `output_dir`直下の`lesson_pages.json`/`canva_design.md`を参照していた既存テスト（`tests/test_build_all_cli.py`の5件、`tests/test_output_formats.py`の1件）を、正式output（`editable/`/`canva/`。`--output-format canva`指定時）または`compat/`配下の参照に更新。新規に「直下への重複が無いこと」「`--no-compat-output`でcompat/自体が生成されないこと」を確認するテストを追加
+
+### 追加修正: brushup系outputとexports系outputの役割重複整理（Phase 9.2）
+
+Phase 9.1では`lesson_pages.json`/`canva_design.md`の同名重複のみ解消したが、`brushup.md`/`brushup.docx`/`brushup.pdf`（`output_dir`直下）と`exports/material.md`/`material.docx`/`material.pdf`（Phase 9の正式output）が同名ではないものの役割が重複し、「どちらが正式か」分かりにくい問題が判明した。以下の通り整理した。
+
+- [x] `build-all`が生成する後方互換用の`brushup.md`/`brushup.docx`/`brushup.pdf`を`output_dir`直下から`output/compat/`配下に移動し、`--no-compat-output`（Phase 9.1で追加済み）の対象に含めた。`output_dir`直下には正式な完成outputを置かない方針とした
+- [x] `scenario/`/`review_report.md`は正式outputとの役割重複が無いため、従来通り`output_dir`直下に生成する変更は加えていない
+- [x] ドキュメント更新（README.md/`docs/01_requirements.md`/`docs/02_architecture.md`/`docs/04_output_spec.md`/`docs/08_user_acceptance_test.md`/`docs/README.md`）: 正式な完成outputは`output/exports/`のみであること、`brushup.*`は後方互換専用で新規利用では参照しないことを明記
+- [x] テスト更新: `output_dir`直下の`brushup.md`/`brushup.docx`を参照していた既存テスト（`tests/test_build_all_cli.py`の2件、`tests/test_output_formats.py`の2件）を、`compat/brushup.*`参照に更新。新規に「`brushup.*`が直下に生成されないこと」「`exports/material.*`が正式outputとして生成されること」「`--no-compat-output`で`compat/brushup.*`も生成されないこと」を確認するテストを追加

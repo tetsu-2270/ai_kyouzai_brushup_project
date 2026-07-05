@@ -97,14 +97,16 @@ def build_all(
 
     imported_pages.json/lesson_pages.jsonはシステムが生成する中間ファイルであり、
     作成者が手作業で用意するものではない。**正式な編集対象は`output/editable/lesson_pages.json`
-    のみ、正式なCanva指示書は`output/canva/canva_design.md`のみ**であり、`--output-format`に
-    関わらず常に生成する（`editable/`は常時、`canva/`は`--output-format canva|all`時）。
+    のみ、正式なCanva指示書は`output/canva/canva_design.md`のみ、正式な完成output（Markdown/
+    DOCX/PDF/PPTX）は`output/exports/`のみ**であり、`output_dir`直下には通常ユーザーが使う
+    完成outputを置かない。
 
-    Phase 8時点は`output_dir`直下にも`lesson_pages.json`/`canva_design.md`を生成していたが、
-    `editable/`/`canva/`と同名ファイルが重複し紛らわしいため、`output/compat/`配下に移動した
+    Phase 8時点は`output_dir`直下に`lesson_pages.json`/`canva_design.md`/`brushup.md`/
+    `brushup.docx`/`brushup.pdf`を生成していたが、Phase 9で追加した`editable/`/`canva/`/
+    `exports/`と役割が重複し紛らわしいため、`output/compat/`配下にまとめた
     （`compat_output=False`で無効化できる。既定は有効＝Phase 8からの利用手順を大きく変えない）。
-    `brushup.md`/`brushup.docx`/`brushup.pdf`/`scenario/`/`review_report.md`は同名の重複が
-    無いため、従来通り`output_dir`直下に生成する。
+    `scenario/`/`review_report.md`は正式outputとの役割重複が無いため、従来通り`output_dir`
+    直下に生成する。
     """
     output_dir = Path(output_dir)
     assets_dir = output_dir / "assets"
@@ -118,10 +120,10 @@ def build_all(
     if compat_output:
         write_lesson_pages_json(output_dir / "compat" / "lesson_pages.json", document)
         write_text(output_dir / "compat" / "canva_design.md", render_canva_design(document))
+        write_text(output_dir / "compat" / "brushup.md", render_brushup(document))
+        write_docx(output_dir / "compat" / "brushup.docx", document)
+        write_pdf(output_dir / "compat" / "brushup.pdf", document)
 
-    write_text(output_dir / "brushup.md", render_brushup(document))
-    write_docx(output_dir / "brushup.docx", document)
-    write_pdf(output_dir / "brushup.pdf", document)
     write_scenario_outputs(output_dir / "scenario", document)
     write_text(output_dir / "review_report.md", render_review_report(document))
 
@@ -183,7 +185,7 @@ def main() -> None:
         dest="compat_output",
         action="store_false",
         default=True,
-        help="Phase 8互換output(output/compat/lesson_pages.json・canva_design.md)を生成しない（既定は生成する）",
+        help="Phase 8互換output(output/compat/lesson_pages.json・canva_design.md・brushup.md・brushup.docx・brushup.pdf)を生成しない（既定は生成する）",
     )
 
     regenerate_parser = subparsers.add_parser(

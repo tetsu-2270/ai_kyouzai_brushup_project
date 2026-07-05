@@ -83,10 +83,10 @@ def test_cli_build_all_proofread_generates_full_output_set(tmp_path, monkeypatch
     assert (output_dir / "assets" / "page_001.png").exists()
     assert (output_dir / "assets" / "page_002.png").exists()
     assert (output_dir / "assets" / "page_003.png").exists()
-    assert (output_dir / "brushup.md").exists()
     assert (output_dir / "compat" / "canva_design.md").exists()
-    assert (output_dir / "brushup.docx").exists()
-    assert (output_dir / "brushup.pdf").exists()
+    assert (output_dir / "compat" / "brushup.md").exists()
+    assert (output_dir / "compat" / "brushup.docx").exists()
+    assert (output_dir / "compat" / "brushup.pdf").exists()
     assert (output_dir / "review_report.md").exists()
     for name in ("scenario.json", "scenario.md", "voicevox.txt", "scene.json"):
         assert (output_dir / "scenario" / name).exists()
@@ -177,7 +177,7 @@ def test_cli_build_all_restructure_with_requirements(tmp_path, monkeypatch):
 
     data = json.loads((output_dir / "editable" / "lesson_pages.json").read_text(encoding="utf-8"))
     assert data["metadata"]["mode"] == "restructure"
-    assert (output_dir / "brushup.md").exists()
+    assert (output_dir / "compat" / "brushup.md").exists()
 
 
 def test_build_all_and_individual_commands_coexist_in_same_session(tmp_path, monkeypatch):

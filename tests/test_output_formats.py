@@ -82,9 +82,10 @@ def test_build_all_does_not_duplicate_lesson_pages_json_or_canva_design_md_at_ro
 
 
 def test_build_all_no_compat_output_flag_skips_compat_directory(tmp_path, monkeypatch):
-    """--no-compat-outputを指定すると、output/compat/配下が生成されないことを確認する。
+    """--no-compat-outputを指定すると、output/compat/配下(lesson_pages.json/canva_design.md/
+    brushup.md/brushup.docx/brushup.pdf)が一切生成されないことを確認する。
 
-    editable//canva/や、重複の無いbrushup.md等の生成には影響しない。
+    editable//canva/の生成には影響しない。
     """
     source_dir = tmp_path / "source"
     _make_source_images(source_dir, count=1)
@@ -102,9 +103,79 @@ def test_build_all_no_compat_output_flag_skips_compat_directory(tmp_path, monkey
     main()
 
     assert not (output_dir / "compat").exists()
+    assert not (output_dir / "brushup.md").exists()
+    assert not (output_dir / "brushup.docx").exists()
+    assert not (output_dir / "brushup.pdf").exists()
     assert (output_dir / "editable" / "lesson_pages.json").exists()
-    assert (output_dir / "brushup.md").exists()
-    assert (output_dir / "brushup.docx").exists()
+
+
+def test_build_all_does_not_duplicate_brushup_role_at_root(tmp_path, monkeypatch):
+    """brushup.*(md/docx/pdf)がoutput_dir直下に生成されず、正式outputはexports/、
+    後方互換outputはcompat/に整理されていることを確認する（Phase 9.2）。
+    """
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir, count=1)
+    output_dir = tmp_path / "output"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "build-all",
+            "--input", str(source_dir),
+            "--mode", "proofread",
+            "--output-dir", str(output_dir),
+            "--output-format", "all",
+        ],
+    )
+    main()
+
+    # output_dir直下にはbrushup.*を置かない。
+    assert not (output_dir / "brushup.md").exists()
+    assert not (output_dir / "brushup.docx").exists()
+    assert not (output_dir / "brushup.pdf").exists()
+
+    # 正式な完成outputはexports/にある。
+    assert (output_dir / "exports" / "material.md").exists()
+    assert (output_dir / "exports" / "material.docx").exists()
+    assert (output_dir / "exports" / "material.pdf").exists()
+
+    # 後方互換outputはcompat/にまとめられる（既定で生成）。
+    assert (output_dir / "compat" / "brushup.md").exists()
+    assert (output_dir / "compat" / "brushup.docx").exists()
+    assert (output_dir / "compat" / "brushup.pdf").exists()
+
+    # Phase 9.1で整理済みのcompat/lesson_pages.json・canva_design.mdの扱いは変わらない。
+    assert (output_dir / "compat" / "lesson_pages.json").exists()
+    assert (output_dir / "compat" / "canva_design.md").exists()
+    assert (output_dir / "editable" / "lesson_pages.json").exists()
+    assert (output_dir / "canva" / "canva_design.md").exists()
+
+
+def test_build_all_no_compat_output_skips_brushup_compat_files(tmp_path, monkeypatch):
+    """--no-compat-output指定時は、compat/brushup.*が一切生成されないことを確認する。"""
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir, count=1)
+    output_dir = tmp_path / "output"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "build-all",
+            "--input", str(source_dir),
+            "--mode", "proofread",
+            "--output-dir", str(output_dir),
+            "--output-format", "all",
+            "--no-compat-output",
+        ],
+    )
+    main()
+
+    assert not (output_dir / "compat").exists()
+    assert not (output_dir / "brushup.md").exists()
+    assert not (output_dir / "brushup.docx").exists()
+    assert not (output_dir / "brushup.pdf").exists()
+    # 正式outputは--no-compat-outputの影響を受けない。
+    assert (output_dir / "exports" / "material.md").exists()
+    assert (output_dir / "editable" / "lesson_pages.json").exists()
+    assert (output_dir / "canva" / "canva_design.md").exists()
 
 
 def test_build_all_default_output_format_resolves_to_image_for_image_input(tmp_path, monkeypatch):
@@ -190,10 +261,12 @@ def test_build_all_output_format_canva_generates_canva_option_output(tmp_path, m
     canva_path = output_dir / "canva" / "canva_design.md"
     assert canva_path.exists()
     assert "元画像: assets/page_001.png" in canva_path.read_text(encoding="utf-8")
-    # canva指定時でも、後方互換のためoutput_dir直下の一式は引き続き生成される
-    # （Canva指示書だけが最終成果物になる設計にはしない）。
-    assert (output_dir / "brushup.md").exists()
-    assert (output_dir / "brushup.docx").exists()
+    # canva指定時でも、後方互換のためcompat/配下の一式は引き続き生成される
+    # （Canva指示書だけが最終成果物になる設計にはしない）。output_dir直下には生成しない。
+    assert (output_dir / "compat" / "brushup.md").exists()
+    assert (output_dir / "compat" / "brushup.docx").exists()
+    assert not (output_dir / "brushup.md").exists()
+    assert not (output_dir / "brushup.docx").exists()
 
 
 def test_build_all_output_format_json_does_not_create_rendered_or_exports(tmp_path, monkeypatch):

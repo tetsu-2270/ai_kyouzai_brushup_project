@@ -87,7 +87,7 @@ python3 -m src.cli build-all \
 | `json` | なし（`editable/lesson_pages.json`のみ） | 中間ファイルだけ欲しい・後で`regenerate`する場合 |
 | `all` | 上記すべて | どの形式が使えそうか一通り見比べたい場合 |
 
-`--output-format`の指定に関わらず、`output/editable/lesson_pages.json`は常に生成されます。**正式な編集対象は`output/editable/lesson_pages.json`のみ、正式なCanva指示書は`output/canva/canva_design.md`のみです。** Phase 8時点の`lesson_pages.json`/`canva_design.md`と同名ファイルを`output/`直下に重複させないため、後方互換が必要な場合は`output/compat/lesson_pages.json`・`output/compat/canva_design.md`としてまとめて生成します（`--no-compat-output`で無効化できます）。`output/brushup.md`・`output/brushup.docx`・`output/brushup.pdf`・`output/scenario/`は同名重複が無いため、引き続き`output/`直下に生成されます。
+`--output-format`の指定に関わらず、`output/editable/lesson_pages.json`は常に生成されます。**正式な編集対象は`output/editable/lesson_pages.json`のみ、正式なCanva指示書は`output/canva/canva_design.md`のみ、正式な完成output（Markdown/DOCX/PDF/PPTX）は`output/exports/material.*`のみです。** `output/`直下には、通常ユーザーが使う完成outputを置きません。Phase 8時点の`lesson_pages.json`/`canva_design.md`/`brushup.md`/`brushup.docx`/`brushup.pdf`は、後方互換が必要な場合に`output/compat/`配下へまとめて生成します（`--no-compat-output`で無効化できます）。`output/scenario/`・`output/review_report.md`は正式outputとの役割重複が無いため、引き続き`output/`直下に生成されます。
 
 ### 1.4 editable中間ファイルを編集して再生成する（`regenerate`）
 
@@ -123,16 +123,15 @@ python3 -m src.cli regenerate --input output/editable/lesson_pages.json --output
 | `output/imported_pages.json` | 元資料から自動取り込みしたテキスト・画像参照 | システム生成物（中間ファイル）。手で作らない |
 | `output/assets/` | 元画像・元ページ画像・スライド埋め込み画像 | システム生成物。完成output生成時に参照する元画像 |
 | `output/editable/lesson_pages.json` | 正データ（再生成用の編集対象） | **システム生成物だが、ユーザーが編集してよい唯一のファイル**。編集後は`regenerate`で再生成する |
-| `output/rendered/page_NNN.png` | 完成画像（`--output-format image`または`same`で画像入力時） | 完成output。配布・確認用 |
-| `output/exports/material.pdf` | PDF（`--output-format pdf`時） | 完成output |
-| `output/exports/material.pptx` | PowerPoint（`--output-format pptx`時） | 完成output |
-| `output/exports/material.docx` | Word（`--output-format docx`時） | 完成output |
-| `output/exports/material.md` | Markdown（`--output-format md`時） | 完成output |
-| `output/canva/canva_design.md` | Canva向けレイアウト設計書・AI投入用プロンプト（`--output-format canva`時） | 完成output（オプション出力。主outputではない） |
+| `output/rendered/page_NNN.png` | 完成画像（`--output-format image`または`same`で画像入力時） | ★正式output。配布・確認用 |
+| `output/exports/material.pdf` | PDF（`--output-format pdf`時） | ★正式output |
+| `output/exports/material.pptx` | PowerPoint（`--output-format pptx`時） | ★正式output |
+| `output/exports/material.docx` | Word（`--output-format docx`時） | ★正式output |
+| `output/exports/material.md` | Markdown（`--output-format md`時） | ★正式output |
+| `output/canva/canva_design.md` | Canva向けレイアウト設計書・AI投入用プロンプト（`--output-format canva`時） | ★正式output（オプション出力。主outputではない） |
 | `output/scenario/*` | 動画・音声化用4ファイル | システム生成物 |
 | `output/review_report.md` | `role`/`source_page_no`の制作者確認用レポート | システム生成物 |
-| `output/brushup.md`・`brushup.docx`・`brushup.pdf` | Phase 8時点の成果物一式 | 同名重複が無いため引き続き`output/`直下に生成される |
-| `output/compat/lesson_pages.json`・`output/compat/canva_design.md` | Phase 8互換の`lesson_pages.json`/`canva_design.md` | **後方互換専用**。`editable/`/`canva/`と同名になるため`output/`直下には置かず`compat/`にまとめる。通常は編集・参照しない。`--no-compat-output`で生成自体を無効化できる |
+| `output/compat/lesson_pages.json`・`canva_design.md`・`brushup.md`・`brushup.docx`・`brushup.pdf` | Phase 8時点の成果物一式（`lesson_pages.json`/`canva_design.md`/教材ブラッシュアップ設計書のMarkdown・DOCX・PDF） | **後方互換専用**。正式output（`editable/`/`canva/`/`exports/`）と役割が重複するため`output/`直下には置かず`compat/`にまとめる。新規利用では参照しない。`--no-compat-output`で生成自体を無効化できる |
 
 ## 4. 確認する順序（推奨）
 

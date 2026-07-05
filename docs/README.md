@@ -8,7 +8,7 @@
 | [`01_requirements.md`](01_requirements.md) | **現行要件** | 実装済みCLIコマンド、3モードの方針、`lesson_pages.json`正データ方針、`input/`/`output/`除外方針など |
 | [`02_architecture.md`](02_architecture.md) | **現行アーキテクチャ** | 実在する`src/`モジュール構成、実在するデータモデル、処理フロー |
 | [`03_data_format.md`](03_data_format.md) | データ形式（開発者向け） | `pages`形式JSONのスキーマ（`imported_pages.json`もこの形式。作成者は直接作らない） |
-| [`04_output_spec.md`](04_output_spec.md) | **CLI・出力仕様** | 元資料自動取り込み（`import-source`/`build-all`）、完成output形式選択・editable中間ファイル・再生成（`--output-format`/`regenerate`。Phase 9）、`lesson_pages.json`のスキーマ、各派生出力の生成元、restructureプラン・`review-report`のCLI仕様 |
+| [`04_output_spec.md`](04_output_spec.md) | **CLI・出力仕様** | 元資料自動取り込み（`import-source`/`build-all`）、完成output形式選択・editable中間ファイル・再生成（`--output-format`/`regenerate`。Phase 9）、正式output（`editable/`/`canva/`/`exports/`）と後方互換output（`compat/`）の整理（Phase 9.1〜9.2）、`lesson_pages.json`のスキーマ、各派生出力の生成元、restructureプラン・`review-report`のCLI仕様 |
 | [`05_implementation_tasks.md`](05_implementation_tasks.md) | 実装タスク進捗 | Phase 1〜9の完了状況チェックリスト |
 | [`06_claude_code_workflow.md`](06_claude_code_workflow.md) | Claude Code運用手順 | ZIP展開〜実装〜確認までの一般的な進め方 |
 | [`07_api_integration_design.md`](07_api_integration_design.md) | 将来のAPI連携設計メモ | OCR/ブラッシュアップ/Canva設計のAPI化構想（未実装・設計のみ） |
