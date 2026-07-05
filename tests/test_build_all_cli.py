@@ -79,12 +79,12 @@ def test_cli_build_all_proofread_generates_full_output_set(tmp_path, monkeypatch
     main()
 
     assert (output_dir / "imported_pages.json").exists()
-    assert (output_dir / "lesson_pages.json").exists()
+    assert (output_dir / "editable" / "lesson_pages.json").exists()
     assert (output_dir / "assets" / "page_001.png").exists()
     assert (output_dir / "assets" / "page_002.png").exists()
     assert (output_dir / "assets" / "page_003.png").exists()
     assert (output_dir / "brushup.md").exists()
-    assert (output_dir / "canva_design.md").exists()
+    assert (output_dir / "compat" / "canva_design.md").exists()
     assert (output_dir / "brushup.docx").exists()
     assert (output_dir / "brushup.pdf").exists()
     assert (output_dir / "review_report.md").exists()
@@ -108,7 +108,7 @@ def test_cli_build_all_proofread_preserves_page_order_and_count(tmp_path, monkey
     )
     main()
 
-    data = json.loads((output_dir / "lesson_pages.json").read_text(encoding="utf-8"))
+    data = json.loads((output_dir / "editable" / "lesson_pages.json").read_text(encoding="utf-8"))
     assert [page["page_no"] for page in data["pages"]] == [1, 2, 3]
     assert [page["source_page_no"] for page in data["pages"]] == [[1], [2], [3]]
 
@@ -129,7 +129,7 @@ def test_cli_build_all_restructure_keeps_source_page_no(tmp_path, monkeypatch):
     )
     main()
 
-    data = json.loads((output_dir / "lesson_pages.json").read_text(encoding="utf-8"))
+    data = json.loads((output_dir / "editable" / "lesson_pages.json").read_text(encoding="utf-8"))
     assert data["metadata"]["mode"] == "restructure"
     assert all("source_page_no" in page for page in data["pages"])
     all_source_nos = sorted({no for page in data["pages"] for no in page["source_page_no"]})
@@ -137,6 +137,7 @@ def test_cli_build_all_restructure_keeps_source_page_no(tmp_path, monkeypatch):
 
 
 def test_cli_build_all_canva_design_shows_source_image(tmp_path, monkeypatch):
+    """正式なCanva指示書(output/canva/canva_design.md)にsource_imageが表示されることを確認する。"""
     source_dir = tmp_path / "source"
     _make_source_images(source_dir, count=1)
 
@@ -148,11 +149,12 @@ def test_cli_build_all_canva_design_shows_source_image(tmp_path, monkeypatch):
             "--input", str(source_dir),
             "--mode", "proofread",
             "--output-dir", str(output_dir),
+            "--output-format", "canva",
         ],
     )
     main()
 
-    canva_text = (output_dir / "canva_design.md").read_text(encoding="utf-8")
+    canva_text = (output_dir / "canva" / "canva_design.md").read_text(encoding="utf-8")
     assert "元画像: assets/page_001.png" in canva_text
 
 
@@ -173,7 +175,7 @@ def test_cli_build_all_restructure_with_requirements(tmp_path, monkeypatch):
     )
     main()
 
-    data = json.loads((output_dir / "lesson_pages.json").read_text(encoding="utf-8"))
+    data = json.loads((output_dir / "editable" / "lesson_pages.json").read_text(encoding="utf-8"))
     assert data["metadata"]["mode"] == "restructure"
     assert (output_dir / "brushup.md").exists()
 
@@ -195,7 +197,7 @@ def test_build_all_and_individual_commands_coexist_in_same_session(tmp_path, mon
         ],
     )
     main()
-    assert (build_all_output / "lesson_pages.json").exists()
+    assert (build_all_output / "editable" / "lesson_pages.json").exists()
     assert (build_all_output / "assets" / "page_001.png").exists()
 
     # 2. 個別CLI導線: examples/sample_pages.json（pages形式・開発者向けサンプル）を直接指定
@@ -223,5 +225,5 @@ def test_build_all_and_individual_commands_coexist_in_same_session(tmp_path, mon
     assert "元画像: page_01.png" in individual_canva.read_text(encoding="utf-8")
 
     # build-all導線側の出力も、後続の個別CLI実行によって書き換わっていないことを確認する。
-    build_all_data = json.loads((build_all_output / "lesson_pages.json").read_text(encoding="utf-8"))
+    build_all_data = json.loads((build_all_output / "editable" / "lesson_pages.json").read_text(encoding="utf-8"))
     assert build_all_data["pages"][0]["source_image"] == "assets/page_001.png"

@@ -8,13 +8,24 @@ from pathlib import Path
 from .canva_client import write_canva_sync_report
 from .canva_renderer import render_canva_design
 from .docx_renderer import write_docx
+from .image_renderer import render_document_images
 from .import_source import import_source
-from .lesson_pages import build_lesson_pages, render_review_report, write_lesson_pages_json
+from .lesson_pages import LessonDocument, build_lesson_pages, render_review_report, write_lesson_pages_json
 from .parser import load_lesson_document, load_project
 from .pdf_renderer import write_pdf
+from .pptx_export_renderer import write_pptx_export
 from .renderer import render_brushup
 from .scenario_renderer import write_scenario_outputs
 from .wordpress_client import write_wordpress_publish_report
+
+# 完成outputの形式。「same」はinputの性質(画像/PDF/PPTX)に合わせて自動選択する。
+OUTPUT_FORMAT_CHOICES = ["same", "image", "pdf", "pptx", "docx", "md", "canva", "json", "all"]
+
+_INPUT_KIND_TO_DEFAULT_FORMAT = {"image": "image", "pdf": "pdf", "pptx": "pptx"}
+
+# exports/canva配下の完成outputファイル名。プロジェクトタイトルが日本語・記号を含み得るため、
+# ファイルシステム非依存の固定名にする（内容はlesson_pages.jsonのproject_titleを引き続き含む）。
+_EXPORT_BASENAME = "material"
 
 
 def write_text(path: str | Path, text: str) -> None:
@@ -31,33 +42,105 @@ def run_import_source(input_path: str, output_path: str | Path, assets_dir: str 
     write_text(output_path, json.dumps(imported, ensure_ascii=False, indent=2) + "\n")
 
 
+def _detect_input_kind(input_path: str) -> str:
+    """元資料のパスから種別(image/pdf/pptx)を判定する（--output-format same の解決に使う）。"""
+    path = Path(input_path)
+    if path.is_dir():
+        return "image"
+    suffix = path.suffix.lower()
+    if suffix == ".pdf":
+        return "pdf"
+    if suffix == ".pptx":
+        return "pptx"
+    return "image"
+
+
+def resolve_output_format(output_format: str, input_kind: str) -> str:
+    """--output-format same を、入力の性質に応じた具体的な形式に解決する。"""
+    if output_format == "same":
+        return _INPUT_KIND_TO_DEFAULT_FORMAT.get(input_kind, "image")
+    return output_format
+
+
+def _generate_formatted_outputs(document: LessonDocument, output_dir: Path, resolved_format: str) -> None:
+    """editable/lesson_pages.json相当の正データから、指定形式の完成outputを生成する。
+
+    rendered/(画像)・canva/(Canva指示書)・exports/(PDF/PPTX/DOCX/Markdown)に出力する。
+    「json」はeditable中間ファイル自体が対象のため、ここでは追加ファイルを生成しない。
+    """
+    needs_images = resolved_format in ("image", "pptx", "all")
+    image_paths: list[Path] = []
+    if needs_images:
+        image_paths = render_document_images(document, output_dir, output_dir / "rendered")
+
+    if resolved_format in ("pdf", "all"):
+        write_pdf(output_dir / "exports" / f"{_EXPORT_BASENAME}.pdf", document)
+    if resolved_format in ("pptx", "all"):
+        write_pptx_export(output_dir / "exports" / f"{_EXPORT_BASENAME}.pptx", document, image_paths)
+    if resolved_format in ("docx", "all"):
+        write_docx(output_dir / "exports" / f"{_EXPORT_BASENAME}.docx", document)
+    if resolved_format in ("md", "all"):
+        write_text(output_dir / "exports" / f"{_EXPORT_BASENAME}.md", render_brushup(document))
+    if resolved_format in ("canva", "all"):
+        write_text(output_dir / "canva" / "canva_design.md", render_canva_design(document))
+
+
 def build_all(
     input_path: str,
     mode: str,
     output_dir: str | Path,
     requirements_path: str | None = None,
+    output_format: str = "same",
+    compat_output: bool = True,
 ) -> None:
     """元資料(画像/PDF/PPTX)から成果物一式を一括生成する（build-allコマンドの本体）。
 
     imported_pages.json/lesson_pages.jsonはシステムが生成する中間ファイルであり、
-    作成者が手作業で用意するものではない。
+    作成者が手作業で用意するものではない。**正式な編集対象は`output/editable/lesson_pages.json`
+    のみ、正式なCanva指示書は`output/canva/canva_design.md`のみ**であり、`--output-format`に
+    関わらず常に生成する（`editable/`は常時、`canva/`は`--output-format canva|all`時）。
+
+    Phase 8時点は`output_dir`直下にも`lesson_pages.json`/`canva_design.md`を生成していたが、
+    `editable/`/`canva/`と同名ファイルが重複し紛らわしいため、`output/compat/`配下に移動した
+    （`compat_output=False`で無効化できる。既定は有効＝Phase 8からの利用手順を大きく変えない）。
+    `brushup.md`/`brushup.docx`/`brushup.pdf`/`scenario/`/`review_report.md`は同名の重複が
+    無いため、従来通り`output_dir`直下に生成する。
     """
     output_dir = Path(output_dir)
     assets_dir = output_dir / "assets"
     imported_pages_path = output_dir / "imported_pages.json"
-    lesson_pages_path = output_dir / "lesson_pages.json"
 
     run_import_source(input_path, imported_pages_path, assets_dir)
 
     document, _plan = build_lesson_pages(mode, str(imported_pages_path), requirements_path)
-    write_lesson_pages_json(lesson_pages_path, document)
+    write_lesson_pages_json(output_dir / "editable" / "lesson_pages.json", document)
+
+    if compat_output:
+        write_lesson_pages_json(output_dir / "compat" / "lesson_pages.json", document)
+        write_text(output_dir / "compat" / "canva_design.md", render_canva_design(document))
 
     write_text(output_dir / "brushup.md", render_brushup(document))
-    write_text(output_dir / "canva_design.md", render_canva_design(document))
     write_docx(output_dir / "brushup.docx", document)
     write_pdf(output_dir / "brushup.pdf", document)
     write_scenario_outputs(output_dir / "scenario", document)
     write_text(output_dir / "review_report.md", render_review_report(document))
+
+    resolved_format = resolve_output_format(output_format, _detect_input_kind(input_path))
+    _generate_formatted_outputs(document, output_dir, resolved_format)
+
+
+def regenerate(input_path: str, output_format: str, output_dir: str | Path | None = None) -> None:
+    """editable中間ファイル（例: output/editable/lesson_pages.json）から成果物を再生成する。
+
+    ユーザーがeditable中間ファイルを編集した後、完成画像・PDF・PPTX・DOCX・Canva指示書等を
+    作り直すための導線。完成画像やPDFを直接編集するのではなく、この中間ファイルを編集して
+    再生成することを想定する。
+    """
+    editable_path = Path(input_path)
+    document = load_lesson_document(editable_path)
+    resolved_output_dir = Path(output_dir) if output_dir else editable_path.resolve().parent.parent
+    resolved_format = "all" if output_format == "same" else output_format
+    _generate_formatted_outputs(document, resolved_output_dir, resolved_format)
 
 
 def main() -> None:
@@ -89,6 +172,38 @@ def main() -> None:
     )
     build_all_parser.add_argument("--requirements", default=None, help="要件定義JSON（restructureモードで任意）")
     build_all_parser.add_argument("--output-dir", required=True, help="出力先ディレクトリ")
+    build_all_parser.add_argument(
+        "--output-format",
+        choices=OUTPUT_FORMAT_CHOICES,
+        default="same",
+        help="完成outputの形式（same: 入力の性質に合わせる[既定] / image / pdf / pptx / docx / md / canva / json / all）",
+    )
+    build_all_parser.add_argument(
+        "--no-compat-output",
+        dest="compat_output",
+        action="store_false",
+        default=True,
+        help="Phase 8互換output(output/compat/lesson_pages.json・canva_design.md)を生成しない（既定は生成する）",
+    )
+
+    regenerate_parser = subparsers.add_parser(
+        "regenerate",
+        help="editable中間ファイル(output/editable/lesson_pages.json等)を編集した後、成果物を再生成する",
+    )
+    regenerate_parser.add_argument(
+        "--input", required=True, help="編集済みのlesson_pages形式JSON（例: output/editable/lesson_pages.json）"
+    )
+    regenerate_parser.add_argument(
+        "--output-format",
+        choices=OUTPUT_FORMAT_CHOICES,
+        default="all",
+        help="再生成する完成outputの形式（既定はall。sameが指定された場合もallとして扱う）",
+    )
+    regenerate_parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="出力先ディレクトリ（省略時は--inputの2階層上。例: output/editable/lesson_pages.json → output/）",
+    )
 
     lesson_pages_parser = subparsers.add_parser(
         "lesson-pages", help="正データとなるlesson_pages.jsonを生成"
@@ -165,7 +280,9 @@ def main() -> None:
         if args.command == "import-source":
             run_import_source(args.input, args.output, args.assets_dir)
         elif args.command == "build-all":
-            build_all(args.input, args.mode, args.output_dir, args.requirements)
+            build_all(args.input, args.mode, args.output_dir, args.requirements, args.output_format, args.compat_output)
+        elif args.command == "regenerate":
+            regenerate(args.input, args.output_format, args.output_dir)
         elif args.command == "lesson-pages":
             document, plan = build_lesson_pages(args.mode, args.input, args.requirements)
             write_lesson_pages_json(args.output, document)

@@ -1,8 +1,8 @@
 # 01 要件定義
 
-> 本ドキュメントは現状実装（Phase 1〜8）に合わせて更新済みです。設計の一次情報は
+> 本ドキュメントは現状実装（Phase 1〜9）に合わせて更新済みです。設計の一次情報は
 > [`docs/00_redesign_v2.md`](00_redesign_v2.md) を参照してください。本ドキュメントはその要約・要件整理です。
-> Phase 8で追加した元資料自動取り込み（`import-source`/`build-all`）の詳細は[`docs/04_output_spec.md`](04_output_spec.md)・[`docs/08_user_acceptance_test.md`](08_user_acceptance_test.md)を参照してください。
+> Phase 8で追加した元資料自動取り込み（`import-source`/`build-all`）、Phase 9で追加した完成output形式選択・editable中間ファイル・画像output・再生成導線（`--output-format`/`regenerate`）の詳細は[`docs/04_output_spec.md`](04_output_spec.md)・[`docs/08_user_acceptance_test.md`](08_user_acceptance_test.md)を参照してください。
 
 ## システム名
 AI教材ブラッシュアップシステム
@@ -47,7 +47,8 @@ AI教材ブラッシュアップシステム
 | サブコマンド | 役割 | 区分 |
 |---|---|---|
 | `import-source` | 元資料（画像/PDF/PPTX）からテキスト・画像を自動取り込み、`imported_pages.json`（pages形式互換）+画像アセットを生成 | 必須機能 |
-| `build-all` | `import-source`→`lesson-pages`→`generate`/`canva`/`docx`/`pdf`/`scenario`/`review-report`を一括実行（`--mode proofread\|restructure`、`--requirements`）。作成者向けの主導線 | 必須機能 |
+| `build-all` | `import-source`→`lesson-pages`→完成output生成を一括実行（`--mode proofread\|restructure`、`--requirements`、`--output-format`）。作成者向けの主導線 | 必須機能 |
+| `regenerate` | `output/editable/lesson_pages.json`（編集済み中間ファイル）から完成outputを再生成（`--output-format`） | 必須機能 |
 | `lesson-pages` | 正データ`lesson_pages.json`を生成（`--mode proofread\|restructure\|generate`、`--requirements`、`--plan-output`） | 必須機能 |
 | `review-report` | `lesson_pages.json`の`role`/`source_page_no`を制作者確認用Markdownに整理 | 必須機能（制作者向け補助） |
 | `generate` | `lesson_pages.json`から教材ブラッシュアップ設計書(`brushup.md`)を生成 | 必須機能 |
@@ -75,18 +76,22 @@ AI教材ブラッシュアップシステム
 - （`restructure`/`generate`で使う）要件定義`requirements.json`（`theme`/`target_audience`/`goal`/`reader_problem`/`promised_value`/`tone`/`page_count`/`output_style`/`must_include`/`must_not_include`）
 
 ## 出力
+
+**完成outputは「配布・確認用」、`output/editable/lesson_pages.json`は「再生成時にユーザーが編集する対象」という2系統に分ける（Phase 9）。** 完成画像やPDFを直接編集するのではなく、`editable/lesson_pages.json`を編集して`regenerate`コマンドで作り直す。
+
 - 元資料からの自動取り込み中間ファイル（`build-all`/`import-source`使用時のみ）: `imported_pages.json`、画像アセット一式（`output/assets/`）
-- 正データ: `lesson_pages.json`
-- 教材ブラッシュアップ設計書: `brushup.md`
-- Canva向けレイアウト設計書: `canva_design.md`（元資料由来のページは元画像・参考画像への参照を含む）
-- Word教材: `.docx`
-- PDF教材: `.pdf`
+- **再生成用の編集可能な中間output（常に生成）**: `output/editable/lesson_pages.json`（正データと同内容。ユーザーが編集する対象）
+- 完成output（`--output-format`で選択。既定`same`は入力の性質に合わせる）:
+  - 完成画像: `output/rendered/page_NNN.png`（正式なoutput形式の一つ。教材ページに限らずチラシ・SNS投稿画像等にも対応）
+  - PDF/PowerPoint(PPTX)/Word(DOCX)/Markdown: `output/exports/`配下
+  - Canva向けレイアウト設計書: `output/canva/canva_design.md`（**数ある完成output形式の一つであり、主outputではない**。元資料由来のページは元画像・参考画像への参照を含む。後方互換コピーは`output/compat/canva_design.md`）
+- 正データ: `lesson_pages.json`（`output/editable/`配下が正式。`build-all`は後方互換のため`output/compat/`配下にも同内容を生成する。`--no-compat-output`で無効化可能。`output_dir`直下には重複生成しない）
 - 動画生成用シナリオ一式: `scenario.json` / `scenario.md` / `voicevox.txt` / `scene.json`
 - （`restructure`のみ、任意）再構成プラン: `restructure_plan.json`
 - 制作者確認用レポート: `review_report.md`（`role`/`source_page_no`の一覧。配布物には含めない）
 - （任意機能）Canva連携レポート・WordPress投稿連携レポート
 
-出力形式の詳細は[`docs/04_output_spec.md`](04_output_spec.md)を参照。
+出力形式の詳細は[`docs/04_output_spec.md`](04_output_spec.md)「完成outputの形式選択とeditable中間ファイル（Phase 9）」を参照。
 
 ## `input/` / `output/` の扱い
 
@@ -101,3 +106,5 @@ AI教材ブラッシュアップシステム
 - `restructure`/`generate`における外部LLM連携（現状はルールベースのみ。将来拡張候補として[`docs/00_redesign_v2.md`](00_redesign_v2.md)14節に記載）
 - `requirements.json`の`page_count`の実反映（現状はバリデーションのみ行い、`restructure`/`generate`のページ数制御には使用しない。将来拡張用のフィールド）
 - introの`source_page_no`拡大・3ページ以上の連鎖merge・`--plan-input`（Phase 7調査で候補に挙がったが未着手。詳細は`docs/05_implementation_tasks.md`Phase 7参照）
+- PPTX exportの高度なレイアウト再現（1ページ=1スライドに完成画像を配置する簡易構成のみ対応。複雑な図形・アニメーション等の再現は対象外）
+- `source_image`が無いページ（`generate`モード等）の画像output合成におけるデザイン性の作り込み（title/summary/本文を描画する簡易実装。日本語フォントが見つからない環境では文字化けし得る）

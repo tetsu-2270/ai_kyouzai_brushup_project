@@ -19,6 +19,61 @@
 
 `build-all`は`import-source`（→`imported_pages.json`+`output/assets/`）→`lesson-pages`（→`lesson_pages.json`）→`generate`/`canva`/`docx`/`pdf`/`scenario`/`review-report`を内部で順に実行する。`--mode`は`proofread`/`restructure`のみ（`generate`は元資料を使わないモードのため`build-all`の対象外。`generate`を使う場合は`lesson-pages --mode generate`を直接使う）。
 
+## 完成outputの形式選択とeditable中間ファイル（Phase 9）
+
+Phase 9で、完成outputの形式を`--output-format`で選べるようにし、また「編集して再生成するための中間ファイル」を正式なoutputとして位置づけた。
+
+### 基本方針
+
+- **Canva指示書は数ある完成outputの選択肢の一つであり、主outputではない。** `--output-format canva`を指定したときのオプション出力として扱う。
+- **完成画像・PDF・PPTX・DOCXを直接編集するのではなく、`output/editable/lesson_pages.json`を編集して再生成する。** これが「編集対象」として想定する唯一のファイルである。
+- `--output-format`の指定に関わらず、`output/editable/lesson_pages.json`は常に生成する。
+- **正式な編集対象は`output/editable/lesson_pages.json`のみ、正式なCanva指示書は`output/canva/canva_design.md`のみ。** `output_dir`直下には同名ファイルを重複させない（後述「正式outputと後方互換output」参照）。
+
+### `--output-format`の選択肢
+
+| 値 | 意味 | 生成される完成output |
+|---|---|---|
+| `same`（既定） | 入力の性質に合わせる | 画像入力→`image`、PDF入力→`pdf`、PPTX入力→`pptx` |
+| `image` | 完成画像 | `output/rendered/page_NNN.png` |
+| `pdf` | PDF | `output/exports/material.pdf` |
+| `pptx` | PowerPoint | `output/exports/material.pptx`（1ページ=1スライド。スライド内には`rendered/`の完成画像を配置する簡易構成） |
+| `docx` | Word | `output/exports/material.docx` |
+| `md` | Markdown | `output/exports/material.md`（内容は`brushup.md`と同じ） |
+| `canva` | Canva指示書 | `output/canva/canva_design.md` |
+| `json` | 中間ファイルのみ | 追加ファイル無し（`editable/lesson_pages.json`自体が対象） |
+| `all` | 上記すべて | `rendered/`+`exports/`（pdf/pptx/docx/md）+`canva/` |
+
+`build-all --output-format ...`で指定する。`--output-format`を省略した場合は`same`（入力の性質に合わせる）が既定値になる。
+
+### 正式outputと後方互換output（`output/compat/`）
+
+Phase 8時点では`output_dir`直下に`lesson_pages.json`/`canva_design.md`を生成していたが、Phase 9で追加した`output/editable/lesson_pages.json`/`output/canva/canva_design.md`と**同名ファイルが重複し、どちらを編集・参照すべきか分かりにくくなる問題があった**。これを解消するため、`output_dir`直下には`lesson_pages.json`/`canva_design.md`を生成せず、後方互換が必要な場合は`output/compat/`配下にまとめることにした。
+
+- **正式な編集対象は`output/editable/lesson_pages.json`のみ。** `output/compat/lesson_pages.json`は同内容の後方互換コピーであり、通常は編集・参照しない。
+- **正式なCanva指示書は`output/canva/canva_design.md`のみ**（`--output-format canva`/`all`指定時に生成）。`output/compat/canva_design.md`は同内容の後方互換コピーであり、通常は編集・参照しない。
+- `output/compat/`は既定で生成される（`build-all`実行時、`--output-format`の指定に関わらず`lesson_pages.json`/`canva_design.md`の2ファイルを常に生成）。`--no-compat-output`を指定すると`output/compat/`自体を生成しない。
+- `brushup.md`/`brushup.docx`/`brushup.pdf`/`scenario/`/`review_report.md`は`editable/`・`canva/`・`exports/`と同名の重複が無いため、従来通り`output_dir`直下に生成する（`--no-compat-output`の影響を受けない）。
+
+### 画像output（`rendered/`）
+
+`src/image_renderer.py`の`render_document_images()`が生成する。各ページについて、
+
+- `source_image`が設定されている場合: その元画像をそのまま`rendered/page_NNN.png`として採用する（教材に限らず、チラシ・SNS投稿画像等、元のビジュアルをそのまま活かす用途を想定）。
+- `source_image`が無い場合（`generate`モード等）: `title`/`summary`/本文を描画した簡易画像を合成する。日本語フォントが利用できる環境（例: macOSの`ヒラギノ角ゴシック`）ではその字形で描画し、見つからない環境ではPillow既定フォントにフォールバックする（文字化けし得るが画像生成自体は継続する）。
+
+### PPTX export（`exports/material.pptx`）
+
+`src/pptx_export_renderer.py`の`write_pptx_export()`が生成する。1ページ=1スライドとし、タイトルのテキストボックスと、そのページの完成画像（`rendered/`）をスライドに配置する簡易構成。スライド内の複雑な図形・アニメーションの再現は対象外（`rendered/`の画像自体が最終的な見た目を担う）。
+
+### 再生成（`regenerate`コマンド）
+
+```bash
+python3 -m src.cli regenerate --input output/editable/lesson_pages.json --output-format image
+```
+
+`output/editable/lesson_pages.json`（またはユーザーが編集した同形式のJSON）を読み込み、`--output-format`で指定した完成outputを再生成する。`--output-dir`を省略した場合、`--input`の2階層上（`output/editable/lesson_pages.json`なら`output/`）を出力先とする。`--output-format`の既定値は`all`（`same`が指定された場合も`all`として扱う。再生成時は元の入力形式という概念が無いため）。
+
 ## 正データと派生出力の関係
 `lesson_pages.json`（`docs/03_data_format.md`とは別スキーマ）が正データであり、以下の出力はすべてこのファイルから派生生成される。`brushup.md`と`canva_design.md`が同じ`lesson_pages.json`から生成されるため、ページ番号・タイトルは常に一致する。
 
@@ -130,9 +185,9 @@ restructureで生成される各ページの`layout_instruction`/`source_image`/
 4. ページ別本文（`body`を話者ごとに整形。`body`自体の見出し記法は保持する）
 
 ## Canva向け設計書
-出力ファイル: `output/canva_design.md`
+出力ファイル: **`output/canva/canva_design.md`（正式。`--output-format canva`/`all`指定時）**、または`output/compat/canva_design.md`（後方互換出力。「完成outputの形式選択とeditable中間ファイル（Phase 9）」の「正式outputと後方互換output」参照）
 
-`lesson_pages.json`の`page_no`/`title`/`summary`/`image_text`/`layout_instruction`/`canva_prompt`/`source_image`/`source_assets`から生成する。
+**Canva指示書は数ある完成outputの選択肢の一つであり、主outputではない。** 内容自体は`lesson_pages.json`の`page_no`/`title`/`summary`/`image_text`/`layout_instruction`/`canva_prompt`/`source_image`/`source_assets`から生成する点は変わらない。
 
 構成:
 1. 全体デザインルール

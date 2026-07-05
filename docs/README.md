@@ -8,11 +8,11 @@
 | [`01_requirements.md`](01_requirements.md) | **現行要件** | 実装済みCLIコマンド、3モードの方針、`lesson_pages.json`正データ方針、`input/`/`output/`除外方針など |
 | [`02_architecture.md`](02_architecture.md) | **現行アーキテクチャ** | 実在する`src/`モジュール構成、実在するデータモデル、処理フロー |
 | [`03_data_format.md`](03_data_format.md) | データ形式（開発者向け） | `pages`形式JSONのスキーマ（`imported_pages.json`もこの形式。作成者は直接作らない） |
-| [`04_output_spec.md`](04_output_spec.md) | **CLI・出力仕様** | 元資料自動取り込み（`import-source`/`build-all`）、`lesson_pages.json`のスキーマ、各派生出力（Markdown/DOCX/PDF/シナリオ等）の生成元、restructureプラン・`review-report`のCLI仕様 |
-| [`05_implementation_tasks.md`](05_implementation_tasks.md) | 実装タスク進捗 | Phase 1〜8の完了状況チェックリスト |
+| [`04_output_spec.md`](04_output_spec.md) | **CLI・出力仕様** | 元資料自動取り込み（`import-source`/`build-all`）、完成output形式選択・editable中間ファイル・再生成（`--output-format`/`regenerate`。Phase 9）、`lesson_pages.json`のスキーマ、各派生出力の生成元、restructureプラン・`review-report`のCLI仕様 |
+| [`05_implementation_tasks.md`](05_implementation_tasks.md) | 実装タスク進捗 | Phase 1〜9の完了状況チェックリスト |
 | [`06_claude_code_workflow.md`](06_claude_code_workflow.md) | Claude Code運用手順 | ZIP展開〜実装〜確認までの一般的な進め方 |
 | [`07_api_integration_design.md`](07_api_integration_design.md) | 将来のAPI連携設計メモ | OCR/ブラッシュアップ/Canva設計のAPI化構想（未実装・設計のみ） |
-| [`08_user_acceptance_test.md`](08_user_acceptance_test.md) | **実利用テスト手順（Phase 8・作成者向けの主導線）** | 元資料（画像/PDF/PPTX）の置き方、`build-all`の実行手順、確認順序、評価観点 |
+| [`08_user_acceptance_test.md`](08_user_acceptance_test.md) | **実利用テスト手順（Phase 8〜9・作成者向けの主導線）** | 元資料（画像/PDF/PPTX）の置き方、`build-all`の実行手順・`--output-format`の選び方、`editable/lesson_pages.json`の再生成（`regenerate`）、確認順序、評価観点 |
 | [`feedback_template.md`](feedback_template.md) | フィードバックシート（テンプレート） | 実利用テストの結果を記録するチェックリスト。コピーして使う |
 | [`99_implementation_review_brief.md`](99_implementation_review_brief.md) | 時点レビュー・スナップショット | Phase 1〜4完了時点（2026-07-04）の記録。以降更新しない運用ルールは同ファイル冒頭を参照 |
 | [`99_phase7_review_2026-07-05.md`](99_phase7_review_2026-07-05.md) | 時点レビュー・スナップショット | Phase 7（restructure品質改善・出力のMarkdown混入対策一式）完了時点（2026-07-05）の記録 |
