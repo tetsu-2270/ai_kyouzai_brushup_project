@@ -21,3 +21,6 @@ dev = ["pytest>=8.0.0"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = [
+    "real_ocr: _try_ocr()自体を検証するテスト。tests/conftest.pyの既定OCRモックを適用しない。",
+]

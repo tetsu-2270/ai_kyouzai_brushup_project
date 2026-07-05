@@ -270,3 +270,146 @@ def test_docs_explain_missing_japanese_font_warning():
 def test_docs_04_documents_font_resolution_functions():
     text = _read(REPO_ROOT / "docs" / "04_output_spec.md")
     assert "resolve_font_path" in text
+
+
+# --- Phase 10.1: OCR前提ソフトウェアの事前チェック・PATH診断 -------------------------
+
+
+def test_docs_document_check_ocr_command_and_scripts():
+    """check-ocrコマンド・診断スクリプトの使い方がREADME/docs/04/08に記載されていることを確認する。"""
+    for path in (
+        REPO_ROOT / "README.md",
+        REPO_ROOT / "docs" / "04_output_spec.md",
+        REPO_ROOT / "docs" / "08_user_acceptance_test.md",
+    ):
+        text = _read(path)
+        assert "check-ocr" in text
+
+
+def test_docs_explain_tesseract_and_japanese_language_data_requirement():
+    """Tesseract本体・日本語言語データ(jpn)が必要である旨がREADME/docs/08に明記されていることを確認する。"""
+    for path in (REPO_ROOT / "README.md", REPO_ROOT / "docs" / "08_user_acceptance_test.md"):
+        text = _read(path)
+        assert "tesseract" in text.lower()
+        assert "jpn" in text or "言語データ" in text
+
+
+def test_docs_explain_homebrew_path_diagnosis_for_apple_silicon_and_intel():
+    """Apple Silicon/Intel Macそれぞれのbrewパスと、PATHが通っていないだけの場合のbrew shellenv案内が
+    docs/04・docs/08に明記されていることを確認する。"""
+    for path in (REPO_ROOT / "docs" / "04_output_spec.md", REPO_ROOT / "docs" / "08_user_acceptance_test.md"):
+        text = _read(path)
+        assert "brew shellenv" in text
+
+
+def test_scripts_check_ocr_env_exists_and_is_documented():
+    script_path = REPO_ROOT / "scripts" / "check_ocr_env.sh"
+    assert script_path.exists()
+    docs_04_text = _read(REPO_ROOT / "docs" / "04_output_spec.md")
+    assert "check_ocr_env.sh" in docs_04_text
+
+
+# --- Phase 10.1 追加修正: OCR必須モードでOCR不能時は正常終了しない -------------------
+
+
+def test_docs_explain_build_all_fails_on_ocr_precondition():
+    """build-allのproofread/restructureが、OCR不能時にエラー終了する仕様がREADME/docs/04/08に
+    明記されていることを確認する。"""
+    for path in (
+        REPO_ROOT / "README.md",
+        REPO_ROOT / "docs" / "04_output_spec.md",
+        REPO_ROOT / "docs" / "08_user_acceptance_test.md",
+    ):
+        text = _read(path)
+        assert "エラー終了" in text or "exit 1" in text
+
+
+def test_docs_document_allow_empty_ocr_flag():
+    """--allow-empty-ocrオプションがREADME/docs/01/04/08に記載されていることを確認する。"""
+    for path in (
+        REPO_ROOT / "README.md",
+        REPO_ROOT / "docs" / "01_requirements.md",
+        REPO_ROOT / "docs" / "04_output_spec.md",
+        REPO_ROOT / "docs" / "08_user_acceptance_test.md",
+    ):
+        text = _read(path)
+        assert "--allow-empty-ocr" in text
+
+
+# --- Phase 10.2: 成功判定の再点検・実行ログ出力・ログ仕様の共通設計化 ------------------
+
+
+def test_claude_rules_documents_logging_common_design_rule():
+    """logs/の共通仕様がCLAUDE_RULES.mdに明記されていることを確認する。"""
+    text = _read(REPO_ROOT / "CLAUDE_RULES.md")
+    assert "logs/" in text
+    assert "ログ出力の共通設計ルール" in text or "ログ出力" in text
+
+
+def test_claude_rules_documents_success_judgment_policy():
+    """成功判定の方針（実質失敗を正常終了扱いにしない）がCLAUDE_RULES.mdに明記されていることを確認する。"""
+    text = _read(REPO_ROOT / "CLAUDE_RULES.md")
+    assert "成功判定" in text
+
+
+def test_docs_04_has_logs_standard_spec_section():
+    text = _read(REPO_ROOT / "docs" / "04_output_spec.md")
+    assert "実行ログ" in text
+    assert "logs/" in text
+    assert "成功判定の方針" in text
+
+
+def test_docs_explain_logs_git_and_zip_management():
+    """logs/ディレクトリ自体はGit対象・中身は対象外・ZIPには含める、という管理方針が
+    README/docs/01/04に明記されていることを確認する。"""
+    for path in (
+        REPO_ROOT / "README.md",
+        REPO_ROOT / "docs" / "01_requirements.md",
+        REPO_ROOT / "docs" / "04_output_spec.md",
+    ):
+        text = _read(path)
+        assert "logs/" in text
+
+
+def test_logs_gitkeep_exists_and_gitignore_configured():
+    """logs/.gitkeepが存在し、.gitignoreでlogs/*が除外・!logs/.gitkeepが例外設定されていることを
+    確認する。"""
+    gitkeep_path = REPO_ROOT / "logs" / ".gitkeep"
+    assert gitkeep_path.exists()
+
+    gitignore_text = _read(REPO_ROOT / ".gitignore")
+    assert "logs/*" in gitignore_text
+    assert "!logs/.gitkeep" in gitignore_text
+
+
+def test_make_release_zip_does_not_exclude_logs():
+    """scripts/make_release_zip.shがlogs/を除外していない（ZIP対象に含まれる）ことを確認する。"""
+    script_text = _read(REPO_ROOT / "scripts" / "make_release_zip.sh")
+    assert '-x "logs' not in script_text
+    assert "logs/" in script_text  # 意図を明記したコメントが存在する
+
+
+def test_docs_08_explains_success_failure_judgment():
+    text = _read(REPO_ROOT / "docs" / "08_user_acceptance_test.md")
+    assert "成功判定" in text
+    assert "logs/" in text
+
+
+# --- Phase 10.2追加修正: 個別CLI成果物未生成チェック・ログの機密情報マスク --------------
+
+
+def test_docs_document_log_masking_policy():
+    """logs/*.log の機密情報マスク仕様がCLAUDE_RULES.md/docs/04/08に明記されていることを確認する。"""
+    for path in (
+        REPO_ROOT / "CLAUDE_RULES.md",
+        REPO_ROOT / "docs" / "04_output_spec.md",
+        REPO_ROOT / "docs" / "08_user_acceptance_test.md",
+    ):
+        text = _read(path)
+        assert "REDACTED" in text
+
+
+def test_docs_04_lists_masking_target_keywords():
+    text = _read(REPO_ROOT / "docs" / "04_output_spec.md")
+    for keyword in ("password", "token", "api_key", "secret", "authorization"):
+        assert keyword in text.lower()

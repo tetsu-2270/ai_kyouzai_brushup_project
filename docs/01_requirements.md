@@ -46,9 +46,10 @@ AI教材ブラッシュアップシステム
 
 | サブコマンド | 役割 | 区分 |
 |---|---|---|
+| `check-ocr` | OCR環境（tesseract/日本語言語データ/Homebrew）を診断する（Phase 10.1） | 必須機能（補助） |
 | `import-source` | 元資料（画像/PDF/PPTX）からテキスト・画像を自動取り込み、`imported_pages.json`（pages形式互換）+画像アセットを生成 | 必須機能 |
-| `build-all` | `import-source`→`lesson-pages`→完成output生成を一括実行（`--mode proofread\|restructure`、`--requirements`、`--output-format`、`--font-path`）。作成者向けの主導線 | 必須機能 |
-| `regenerate` | `output/editable/lesson_pages.json`（編集済み中間ファイル）から完成outputを再生成（`--output-format`、`--font-path`） | 必須機能 |
+| `build-all` | `import-source`→`lesson-pages`→完成output生成を一括実行（`--mode proofread\|restructure`、`--requirements`、`--output-format`、`--font-path`、`--allow-empty-ocr`）。作成者向けの主導線。画像inputでOCRが実質使えない場合、取り込みページが0件の場合、指定output-formatの成果物が生成されない場合はエラー終了する（Phase 10.1・10.2） | 必須機能 |
+| `regenerate` | `output/editable/lesson_pages.json`（編集済み中間ファイル）から完成outputを再生成（`--output-format`、`--font-path`）。pagesが0件、または指定output-formatの成果物が生成されない場合はエラー終了する（Phase 10.2） | 必須機能 |
 | `lesson-pages` | 正データ`lesson_pages.json`を生成（`--mode proofread\|restructure\|generate`、`--requirements`、`--plan-output`） | 必須機能 |
 | `review-report` | `lesson_pages.json`の`role`/`source_page_no`を制作者確認用Markdownに整理 | 必須機能（制作者向け補助） |
 | `generate` | `lesson_pages.json`から教材ブラッシュアップ設計書(`brushup.md`)を生成 | 必須機能 |
@@ -64,7 +65,7 @@ AI教材ブラッシュアップシステム
 ## 入力
 
 作成者向け主導線（`build-all`）の場合:
-- 元資料そのもの: 画像（`.png`/`.jpg`/`.jpeg`/`.webp`）・PDF（`.pdf`）・PPTX（`.pptx`）。`import-source`が実際にファイルを読み込み、テキスト抽出（OCR/PDFテキスト抽出/PPTXテキスト抽出）と画像アセットの保存（`output/assets/`へのコピー・ページ画像化・埋め込み画像抽出）を行う
+- 元資料そのもの: 画像（`.png`/`.jpg`/`.jpeg`/`.webp`）・PDF（`.pdf`）・PPTX（`.pptx`）。`import-source`が実際にファイルを読み込み、テキスト抽出（OCR/PDFテキスト抽出/PPTXテキスト抽出）と画像アセットの保存（`output/assets/`へのコピー・ページ画像化・埋め込み画像抽出）を行う。画像取り込みはOS側のtesseract本体に依存するため、無い場合・PATHに無い場合・日本語言語データが無い場合は`check-ocr`で事前診断できる（Phase 10.1）。`build-all --mode proofread`/`restructure`は、画像inputでOCRが実質使えない場合（Tesseract未導入・`jpn`言語データ無し・全ページOCR結果が空）にエラー終了する（`--allow-empty-ocr`で無効化可能。詳細は`docs/04_output_spec.md`「OCR前提の事前チェック」参照）
 - （`restructure`で使う、任意）要件定義`requirements.json`（下記）
 
 開発者向け経路（`pages`形式JSONを直接`--input`に渡す場合）:
@@ -93,9 +94,11 @@ AI教材ブラッシュアップシステム
 
 出力形式の詳細は[`docs/04_output_spec.md`](04_output_spec.md)「完成outputの形式選択とeditable中間ファイル（Phase 9）」を参照。
 
-## `input/` / `output/` の扱い
+## `input/` / `output/` / `logs/` の扱い
 
 `input/`（利用者が投入する元ファイル置き場）と`output/`（実行結果の生成物置き場）は、利用者固有データの混入防止のため**Git管理・配布ZIPの対象外**とする（`.gitignore`で除外、`scripts/make_release_zip.sh`でも除外）。動作確認用のサンプルは`examples/`に置く。詳細はREADME「`input/`と`output/`の扱い」節を参照。
+
+`logs/`（実行ログ置き場。Phase 10.2で追加）は上記2つとは扱いが異なる。**`logs/`ディレクトリ自体（`logs/.gitkeep`）はGit管理対象**、**ログファイル本体（`logs/*.log`）はGit管理対象外**（`.gitignore`の`logs/*`＋`!logs/.gitkeep`）。配布ZIPには`logs/`配下のログファイルも**含める**（`input/`/`output/`とは異なる扱い）。詳細は[`docs/04_output_spec.md`](04_output_spec.md)「実行ログ（logs/）の標準仕様」を参照。
 
 ## 対象外（現時点で未実装・意図的に対象外のもの）
 - OCR精度の高度化（`import-source`が`pytesseract`による基本的なOCRを実装済みだが、これは「画像を入力として扱える」ことの実現が目的であり、精度向上そのものは対象外。OCR自体を使わず`prompts/ocr_transcription_prompt.md`を人手でAIに投入する運用も引き続き可能）

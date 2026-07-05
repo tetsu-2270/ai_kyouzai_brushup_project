@@ -99,7 +99,7 @@ def test_import_images_ocr_failure_falls_back_gracefully(tmp_path, monkeypatch):
     """tesseract本体が無い環境でも、OCRに失敗した扱いで空文字にフォールバックし、取り込み自体は成立する。"""
     import src.import_source as import_source_module
 
-    monkeypatch.setattr(import_source_module, "_try_ocr", lambda image_path: "")
+    monkeypatch.setattr(import_source_module, "_try_ocr", lambda image_path, ocr_status: "")
 
     source_dir = tmp_path / "source"
     source_dir.mkdir()
@@ -115,7 +115,9 @@ def test_import_images_ocr_failure_falls_back_gracefully(tmp_path, monkeypatch):
 def test_import_images_preserves_ocr_text_when_available(tmp_path, monkeypatch):
     import src.import_source as import_source_module
 
-    monkeypatch.setattr(import_source_module, "_try_ocr", lambda image_path: "1行目のテキスト\n2行目のテキスト")
+    monkeypatch.setattr(
+        import_source_module, "_try_ocr", lambda image_path, ocr_status: "1行目のテキスト\n2行目のテキスト"
+    )
 
     source_dir = tmp_path / "source"
     source_dir.mkdir()
@@ -128,3 +130,108 @@ def test_import_images_preserves_ocr_text_when_available(tmp_path, monkeypatch):
         {"speaker": "", "text": "2行目のテキスト"},
     ]
     assert page["title"] == "1行目のテキスト"
+
+
+def test_import_images_prints_precondition_warning_when_ocr_not_ready(tmp_path, monkeypatch, capsys):
+    import src.import_source as import_source_module
+
+    not_ready_status = {
+        "tesseract_available": False, "tesseract_path": None, "tesseract_on_path": False,
+        "languages": [], "japanese_available": False, "english_available": False,
+        "brew_available": False, "brew_path": None, "brew_on_path": False,
+        "path_suggestions": [], "warnings": [], "errors": ["Tesseract command was not found."],
+        "ocr_ready": False,
+    }
+    monkeypatch.setattr(import_source_module, "get_ocr_environment_status", lambda: not_ready_status)
+
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    _make_image(source_dir / "page_001.png")
+
+    import_source(source_dir, tmp_path / "assets")
+
+    captured = capsys.readouterr()
+    assert "ERROR" in captured.err
+    assert "Tesseract" in captured.err
+
+
+def test_import_images_prints_all_pages_empty_warning(tmp_path, monkeypatch, capsys):
+    import src.import_source as import_source_module
+
+    monkeypatch.setattr(import_source_module, "_try_ocr", lambda image_path, ocr_status: "")
+
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    _make_image(source_dir / "page_001.png")
+    _make_image(source_dir / "page_002.png")
+
+    import_source(source_dir, tmp_path / "assets")
+
+    captured = capsys.readouterr()
+    assert "check-ocr" in captured.err
+
+
+def test_import_images_does_not_warn_when_ocr_succeeds_for_some_pages(tmp_path, monkeypatch, capsys):
+    import src.import_source as import_source_module
+
+    call_count = {"n": 0}
+
+    def _fake_ocr(image_path, ocr_status):
+        call_count["n"] += 1
+        return "検出されたテキスト" if call_count["n"] == 1 else ""
+
+    monkeypatch.setattr(import_source_module, "_try_ocr", _fake_ocr)
+
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    _make_image(source_dir / "page_001.png")
+    _make_image(source_dir / "page_002.png")
+
+    import_source(source_dir, tmp_path / "assets")
+
+    captured = capsys.readouterr()
+    assert "check-ocr" not in captured.err
+
+
+@pytest.mark.real_ocr
+def test_try_ocr_uses_resolved_tesseract_path_and_language(tmp_path, monkeypatch):
+    """_try_ocrが、環境診断で見つかったtesseractパスと言語をpytesseractに渡すことを確認する。"""
+    import src.import_source as import_source_module
+
+    captured = {}
+
+    class _FakePytesseractModule:
+        class pytesseract:
+            tesseract_cmd = None
+
+        @staticmethod
+        def image_to_string(image, lang=None):
+            captured["tesseract_cmd"] = _FakePytesseractModule.pytesseract.tesseract_cmd
+            captured["lang"] = lang
+            return "OCR結果"
+
+    ocr_status = {
+        "tesseract_available": True,
+        "tesseract_path": "/opt/homebrew/bin/tesseract",
+        "languages": ["eng", "jpn"],
+    }
+
+    import sys
+    monkeypatch.setitem(sys.modules, "pytesseract", _FakePytesseractModule)
+
+    image_path = tmp_path / "page_001.png"
+    _make_image(image_path)
+
+    text = import_source_module._try_ocr(image_path, ocr_status)
+
+    assert text == "OCR結果"
+    assert captured["tesseract_cmd"] == "/opt/homebrew/bin/tesseract"
+    assert captured["lang"] == "jpn+eng"
+
+
+@pytest.mark.real_ocr
+def test_try_ocr_returns_empty_string_when_tesseract_unavailable(tmp_path):
+    import src.import_source as import_source_module
+
+    ocr_status = {"tesseract_available": False, "tesseract_path": None, "languages": []}
+    assert import_source_module._try_ocr(tmp_path / "does_not_matter.png", ocr_status) == ""

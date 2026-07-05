@@ -1,5 +1,6 @@
 import json
 
+import pytest
 from PIL import Image
 
 from src.cli import main
@@ -574,3 +575,602 @@ def test_build_all_warns_when_synthesizing_text_without_japanese_font(tmp_path, 
     # 警告が出ても画像自体は生成され、処理が継続していることを確認する。
     output_dir = editable_path.parent.parent
     assert len(list((output_dir / "rendered").glob("page_*.png"))) > 0
+
+
+# --- Phase 10.1: OCR前提の事前チェック・結果反映 ----------------------------------
+
+
+def test_cli_check_ocr_runs_and_prints_report(capsys):
+    """check-ocrコマンドが例外なく実行され、診断レポートを出力することを確認する。"""
+    monkeypatch_argv = ["cli", "check-ocr"]
+    import sys as sys_module
+
+    original_argv = sys_module.argv
+    sys_module.argv = monkeypatch_argv
+    try:
+        main()
+    finally:
+        sys_module.argv = original_argv
+
+    captured = capsys.readouterr()
+    assert "OCR" in captured.out
+
+
+def test_build_all_fails_when_tesseract_missing_for_image_input_proofread(tmp_path, monkeypatch, capsys):
+    """画像input + proofreadモードでtesseractが無い場合、build-allがエラー終了することを確認する
+    （Phase 10.1追加修正: OCR必須モードでOCR不能なまま空データで成功させない）。"""
+    import src.cli as cli_module
+    import src.import_source as import_source_module
+
+    not_ready_status = {
+        "tesseract_available": False, "tesseract_path": None, "tesseract_on_path": False,
+        "languages": [], "japanese_available": False, "english_available": False,
+        "brew_available": False, "brew_path": None, "brew_on_path": False,
+        "path_suggestions": [], "warnings": [], "errors": ["Tesseract command was not found."],
+        "ocr_ready": False,
+    }
+    monkeypatch.setattr(import_source_module, "get_ocr_environment_status", lambda: not_ready_status)
+    monkeypatch.setattr(cli_module, "get_ocr_environment_status", lambda: not_ready_status)
+
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir, count=1)
+    output_dir = tmp_path / "output"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "build-all", "--input", str(source_dir), "--mode", "proofread", "--output-dir", str(output_dir)],
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert "ERROR" in captured.err
+    assert "Tesseract" in captured.err
+    assert "proofread" in captured.err
+    # editable/lesson_pages.jsonはOCR前提チェックより後の工程で生成されるため、作られない。
+    assert not (output_dir / "editable" / "lesson_pages.json").exists()
+
+
+def test_build_all_fails_when_japanese_language_data_missing_for_proofread(tmp_path, monkeypatch, capsys):
+    """画像input + proofreadモードでjpn言語データが無い場合、build-allがエラー終了することを確認する。"""
+    import src.cli as cli_module
+    import src.import_source as import_source_module
+
+    jpn_missing_status = {
+        "tesseract_available": True, "tesseract_path": "/usr/bin/tesseract", "tesseract_on_path": True,
+        "languages": ["eng"], "japanese_available": False, "english_available": True,
+        "brew_available": True, "brew_path": "/usr/local/bin/brew", "brew_on_path": True,
+        "path_suggestions": [], "warnings": [], "errors": ["Japanese OCR language data 'jpn' was not found."],
+        "ocr_ready": False,
+    }
+    monkeypatch.setattr(import_source_module, "get_ocr_environment_status", lambda: jpn_missing_status)
+    monkeypatch.setattr(cli_module, "get_ocr_environment_status", lambda: jpn_missing_status)
+
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir, count=1)
+    output_dir = tmp_path / "output"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "build-all", "--input", str(source_dir), "--mode", "proofread", "--output-dir", str(output_dir)],
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert "ERROR" in captured.err
+    assert "jpn" in captured.err
+    assert not (output_dir / "editable" / "lesson_pages.json").exists()
+
+
+def test_build_all_fails_when_all_pages_ocr_empty_for_proofread(tmp_path, monkeypatch, capsys):
+    """Tesseract自体は使えるが、全ページのOCR結果が空の場合もbuild-allがエラー終了することを確認する。"""
+    import src.import_source as import_source_module
+
+    monkeypatch.setattr(import_source_module, "_try_ocr", lambda image_path, ocr_status: "")
+
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir, count=2)
+    output_dir = tmp_path / "output"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "build-all", "--input", str(source_dir), "--mode", "proofread", "--output-dir", str(output_dir)],
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert "ERROR" in captured.err
+    assert "proofread" in captured.err
+    assert not (output_dir / "editable" / "lesson_pages.json").exists()
+
+
+def test_build_all_warns_and_continues_when_some_pages_ocr_empty(tmp_path, monkeypatch, capsys):
+    """一部のページだけOCR結果が空の場合は、警告のうえ処理を継続することを確認する。"""
+    import src.import_source as import_source_module
+
+    call_count = {"n": 0}
+
+    def _fake_ocr(image_path, ocr_status):
+        call_count["n"] += 1
+        return "検出されたテキスト" if call_count["n"] == 1 else ""
+
+    monkeypatch.setattr(import_source_module, "_try_ocr", _fake_ocr)
+
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir, count=2)
+    output_dir = tmp_path / "output"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "build-all", "--input", str(source_dir), "--mode", "proofread", "--output-dir", str(output_dir)],
+    )
+    main()
+
+    captured = capsys.readouterr()
+    assert "WARNING" in captured.err
+    assert "1 of 2" in captured.err
+    assert (output_dir / "editable" / "lesson_pages.json").exists()
+
+
+def test_build_all_allow_empty_ocr_flag_bypasses_ocr_precondition(tmp_path, monkeypatch, capsys):
+    """--allow-empty-ocrを指定すれば、Tesseract未導入・全ページ空でもエラー終了しないことを確認する。"""
+    import src.import_source as import_source_module
+
+    monkeypatch.setattr(import_source_module, "_try_ocr", lambda image_path, ocr_status: "")
+
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir, count=1)
+    output_dir = tmp_path / "output"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "build-all", "--input", str(source_dir), "--mode", "proofread",
+            "--output-dir", str(output_dir), "--allow-empty-ocr",
+        ],
+    )
+    main()
+
+    assert (output_dir / "editable" / "lesson_pages.json").exists()
+
+
+def test_build_all_ocr_precondition_does_not_apply_to_pdf_input(tmp_path):
+    """PDF inputはOCRではなくネイティブなテキスト抽出を使うため、OCR前提チェックの対象外であることを
+    確認する（PDFにテキストがあれば、Tesseractの有無に関わらず処理が継続する）。"""
+    import fitz
+
+    pdf_path = tmp_path / "source.pdf"
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "PDFのテキスト")
+    doc.save(pdf_path)
+    doc.close()
+
+    output_dir = tmp_path / "output"
+    import sys as sys_module
+
+    original_argv = sys_module.argv
+    sys_module.argv = [
+        "cli", "build-all", "--input", str(pdf_path), "--mode", "proofread", "--output-dir", str(output_dir),
+    ]
+    try:
+        main()
+    finally:
+        sys_module.argv = original_argv
+
+    assert (output_dir / "editable" / "lesson_pages.json").exists()
+
+
+def test_build_all_ocr_result_flows_into_editable_lesson_pages_json(tmp_path, monkeypatch):
+    """OCRが成功した場合、その結果がimported_pages.json・editable/lesson_pages.jsonの
+    bodyに反映され、proofreadの校正対象として使えることを確認する。"""
+    import src.import_source as import_source_module
+
+    monkeypatch.setattr(
+        import_source_module, "_try_ocr",
+        lambda image_path, ocr_status: "教材の重要なポイントです。",
+    )
+
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir, count=1)
+    output_dir = tmp_path / "output"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "build-all", "--input", str(source_dir), "--mode", "proofread", "--output-dir", str(output_dir)],
+    )
+    main()
+
+    imported_data = json.loads((output_dir / "imported_pages.json").read_text(encoding="utf-8"))
+    assert imported_data["pages"][0]["lines"] == [{"speaker": "", "text": "教材の重要なポイントです。"}]
+
+    editable_data = json.loads((output_dir / "editable" / "lesson_pages.json").read_text(encoding="utf-8"))
+    assert "教材の重要なポイントです。" in editable_data["pages"][0]["body"]
+
+
+def test_build_all_does_not_warn_all_pages_empty_when_ocr_succeeds(tmp_path, monkeypatch, capsys):
+    import src.import_source as import_source_module
+
+    monkeypatch.setattr(
+        import_source_module, "_try_ocr",
+        lambda image_path, ocr_status: "抽出されたテキスト",
+    )
+
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir, count=2)
+    output_dir = tmp_path / "output"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "build-all", "--input", str(source_dir), "--mode", "proofread", "--output-dir", str(output_dir)],
+    )
+    main()
+
+    captured = capsys.readouterr()
+    assert "check-ocr" not in captured.err
+
+
+# --- Phase 10.2: 実行ログ出力 -----------------------------------------------------
+
+
+def _log_dir(monkeypatch) -> "Path":
+    import os
+    from pathlib import Path
+
+    return Path(os.environ["AI_KYOUZAI_LOGS_DIR"])
+
+
+def test_build_all_writes_log_file_on_success(tmp_path, monkeypatch):
+    """build-all成功時、logs/にbuild-allのログファイルが作成されることを確認する。"""
+    import fitz
+
+    pdf_path = tmp_path / "source.pdf"
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "sample text")
+    doc.save(pdf_path)
+    doc.close()
+
+    output_dir = tmp_path / "output"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "build-all", "--input", str(pdf_path), "--mode", "proofread", "--output-dir", str(output_dir)],
+    )
+    main()
+
+    log_files = list(_log_dir(monkeypatch).glob("*_build-all.log"))
+    assert len(log_files) == 1
+    text = log_files[0].read_text(encoding="utf-8")
+    assert "command: build-all" in text
+    assert "exit_code: 0" in text
+    assert "INPUT" in text
+    assert "OUTPUT" in text
+
+
+def test_build_all_writes_log_file_on_failure(tmp_path, monkeypatch):
+    """build-all失敗時（OCR不能）にも、exit_code・エラー内容を含むログが残ることを確認する。"""
+    import src.cli as cli_module
+    import src.import_source as import_source_module
+
+    not_ready_status = {
+        "tesseract_available": False, "tesseract_path": None, "tesseract_on_path": False,
+        "languages": [], "japanese_available": False, "english_available": False,
+        "brew_available": False, "brew_path": None, "brew_on_path": False,
+        "path_suggestions": [], "warnings": [], "errors": ["Tesseract command was not found."],
+        "ocr_ready": False,
+    }
+    monkeypatch.setattr(import_source_module, "get_ocr_environment_status", lambda: not_ready_status)
+    monkeypatch.setattr(cli_module, "get_ocr_environment_status", lambda: not_ready_status)
+
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir, count=1)
+    output_dir = tmp_path / "output"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "build-all", "--input", str(source_dir), "--mode", "proofread", "--output-dir", str(output_dir)],
+    )
+    with pytest.raises(SystemExit):
+        main()
+
+    log_files = list(_log_dir(monkeypatch).glob("*_build-all.log"))
+    assert len(log_files) == 1
+    text = log_files[0].read_text(encoding="utf-8")
+    assert "exit_code: 1" in text
+    assert "Tesseract" in text
+
+
+def test_lesson_pages_generate_mode_writes_log_named_generate(tmp_path, monkeypatch):
+    """lesson-pages --mode generateの実行ログが、モード名(generate)でファイル名になることを確認する。"""
+    output_path = tmp_path / "output" / "editable" / "lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages", "--mode", "generate",
+            "--requirements", "examples/requirements_ai_instagram.json",
+            "--output", str(output_path),
+        ],
+    )
+    main()
+
+    log_files = list(_log_dir(monkeypatch).glob("*_generate.log"))
+    assert len(log_files) == 1
+    text = log_files[0].read_text(encoding="utf-8")
+    assert "exit_code: 0" in text
+    assert str(output_path) in text
+
+
+def test_regenerate_writes_log_file_with_input_and_output_format(tmp_path, monkeypatch):
+    """regenerate実行ログに、入力パスとoutput-formatが記録されることを確認する。"""
+    editable_path = tmp_path / "output" / "editable" / "lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages", "--mode", "generate",
+            "--requirements", "examples/requirements_ai_instagram.json",
+            "--output", str(editable_path),
+        ],
+    )
+    main()
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "regenerate", "--input", str(editable_path), "--output-format", "image"],
+    )
+    main()
+
+    log_files = list(_log_dir(monkeypatch).glob("*_regenerate.log"))
+    assert len(log_files) == 1
+    text = log_files[0].read_text(encoding="utf-8")
+    assert str(editable_path) in text
+    assert "image" in text
+    assert "exit_code: 0" in text
+
+
+def test_regenerate_writes_log_on_json_error(tmp_path, monkeypatch):
+    """regenerateがJSON構文エラーで失敗した場合も、ログにエラー内容が残ることを確認する。"""
+    broken_path = tmp_path / "broken.json"
+    broken_path.write_text("{ this is not valid json", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "sys.argv", ["cli", "regenerate", "--input", str(broken_path), "--output-format", "image"]
+    )
+    with pytest.raises(SystemExit):
+        main()
+
+    log_files = list(_log_dir(monkeypatch).glob("*_regenerate.log"))
+    assert len(log_files) == 1
+    text = log_files[0].read_text(encoding="utf-8")
+    assert "exit_code: 1" in text
+    assert "JSON" in text or "不正" in text
+
+
+def test_check_ocr_writes_log_file_with_ocr_summary(tmp_path, monkeypatch):
+    monkeypatch.setattr("sys.argv", ["cli", "check-ocr"])
+    main()
+
+    log_files = list(_log_dir(monkeypatch).glob("*_check-ocr.log"))
+    assert len(log_files) == 1
+    text = log_files[0].read_text(encoding="utf-8")
+    assert "exit_code: 0" in text
+    assert "tesseract_available" in text
+
+
+# --- Phase 10.2: 成功判定の見直し ---------------------------------------------------
+
+
+def test_build_all_fails_when_input_directory_empty(tmp_path, monkeypatch):
+    """input/sourceが空ディレクトリの場合、build-allが非ゼロ終了することを確認する
+    （import_source()の既存動作。回帰確認）。"""
+    empty_source = tmp_path / "empty_source"
+    empty_source.mkdir()
+    output_dir = tmp_path / "output"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "build-all", "--input", str(empty_source), "--mode", "proofread", "--output-dir", str(output_dir)],
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 1
+
+
+def test_build_all_fails_when_only_unsupported_files_in_directory(tmp_path, monkeypatch):
+    """input/sourceに対応外ファイル（.txt等）しか無い場合、build-allが非ゼロ終了することを確認する。"""
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    (source_dir / "notes.txt").write_text("これは画像でもPDFでもPPTXでもない", encoding="utf-8")
+    output_dir = tmp_path / "output"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "build-all", "--input", str(source_dir), "--mode", "proofread", "--output-dir", str(output_dir)],
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 1
+
+
+def test_regenerate_fails_when_pages_empty(tmp_path, monkeypatch):
+    """editable中間ファイルのpagesが空の場合、regenerateが非ゼロ終了することを確認する。"""
+    empty_pages_path = tmp_path / "lesson_pages.json"
+    empty_pages_path.write_text(
+        json.dumps({
+            "metadata": {
+                "project_title": "空テスト", "mode": "generate", "source_policy": "generate",
+                "target_audience": "", "tone": "", "generated_at": "2026-01-01T00:00:00",
+                "requirements_source": None,
+            },
+            "pages": [],
+        }, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "sys.argv", ["cli", "regenerate", "--input", str(empty_pages_path), "--output-format", "image"]
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 1
+
+
+def test_regenerate_fails_when_specified_output_format_artifact_not_generated(tmp_path, monkeypatch):
+    """レンダラーが何らかの理由で成果物を生成できなかった場合、regenerateが非ゼロ終了することを
+    確認する（実質失敗を正常終了扱いにしないための安全網）。"""
+    import src.cli as cli_module
+
+    editable_path = tmp_path / "output" / "editable" / "lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages", "--mode", "generate",
+            "--requirements", "examples/requirements_ai_instagram.json",
+            "--output", str(editable_path),
+        ],
+    )
+    main()
+
+    monkeypatch.setattr(cli_module, "write_pdf", lambda path, document: None)
+    monkeypatch.setattr(
+        "sys.argv", ["cli", "regenerate", "--input", str(editable_path), "--output-format", "pdf"]
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 1
+
+
+# --- Phase 10.2追加修正: 個別CLIの成果物未生成チェック -------------------------------
+
+
+def test_lesson_pages_cli_fails_when_pages_empty(tmp_path, monkeypatch):
+    """個別CLIのlesson-pagesが、pagesが空のpages形式JSONを渡された場合に非ゼロ終了することを
+    確認する（build-all/regenerateと同様、実質失敗を正常終了扱いにしない）。"""
+    empty_input = tmp_path / "empty_pages.json"
+    empty_input.write_text(
+        json.dumps({"project_title": "空テスト", "target_reader": "テスター", "pages": []}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    output_path = tmp_path / "lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "lesson-pages", "--mode", "proofread", "--input", str(empty_input), "--output", str(output_path)],
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 1
+
+
+def test_import_source_cli_fails_when_imported_pages_are_empty(tmp_path, monkeypatch):
+    """個別CLIのimport-sourceが、取り込み結果のpagesが0件だった場合に非ゼロ終了することを
+    確認する（画像ディレクトリが空のケースは既存のimport_source()自身が検知するが、
+    PPTXでスライドが1つも無い等のケースに備えた追加の安全網）。pymupdfはページ0件のPDFを
+    保存できないため、import_source()自体をモックして「pagesが空の取り込み結果」を再現する。
+    """
+    import src.cli as cli_module
+
+    monkeypatch.setattr(cli_module, "import_source", lambda input_path, assets_dir: {"pages": []})
+
+    dummy_input = tmp_path / "dummy.pptx"
+    dummy_input.write_bytes(b"dummy")
+    output_path = tmp_path / "imported_pages.json"
+    monkeypatch.setattr(
+        "sys.argv", ["cli", "import-source", "--input", str(dummy_input), "--output", str(output_path)]
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 1
+
+
+def test_canva_cli_fails_when_output_not_generated(tmp_path, monkeypatch):
+    """個別CLIのcanvaが、レンダラーが空文字列を返す（＝実質何も生成できない）場合に
+    非ゼロ終了することを確認する。"""
+    import src.cli as cli_module
+
+    editable_path = tmp_path / "output" / "editable" / "lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages", "--mode", "generate",
+            "--requirements", "examples/requirements_ai_instagram.json",
+            "--output", str(editable_path),
+        ],
+    )
+    main()
+
+    monkeypatch.setattr(cli_module, "render_canva_design", lambda document: "")
+    output_path = tmp_path / "canva_design.md"
+    monkeypatch.setattr(
+        "sys.argv", ["cli", "canva", "--input", str(editable_path), "--output", str(output_path)]
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 1
+
+
+def test_docx_cli_fails_when_output_not_generated(tmp_path, monkeypatch):
+    """個別CLIのdocxが、write_docxが何も書き出さない（例外を投げずに空振りする）場合に
+    非ゼロ終了することを確認する。"""
+    import src.cli as cli_module
+
+    editable_path = tmp_path / "output" / "editable" / "lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages", "--mode", "generate",
+            "--requirements", "examples/requirements_ai_instagram.json",
+            "--output", str(editable_path),
+        ],
+    )
+    main()
+
+    monkeypatch.setattr(cli_module, "write_docx", lambda path, document: None)
+    output_path = tmp_path / "brushup.docx"
+    monkeypatch.setattr(
+        "sys.argv", ["cli", "docx", "--input", str(editable_path), "--output", str(output_path)]
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 1
+
+
+def test_pdf_cli_fails_when_output_not_generated(tmp_path, monkeypatch):
+    """個別CLIのpdfが、write_pdfが何も書き出さない場合に非ゼロ終了することを確認する。"""
+    import src.cli as cli_module
+
+    editable_path = tmp_path / "output" / "editable" / "lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages", "--mode", "generate",
+            "--requirements", "examples/requirements_ai_instagram.json",
+            "--output", str(editable_path),
+        ],
+    )
+    main()
+
+    monkeypatch.setattr(cli_module, "write_pdf", lambda path, document: None)
+    output_path = tmp_path / "brushup.pdf"
+    monkeypatch.setattr(
+        "sys.argv", ["cli", "pdf", "--input", str(editable_path), "--output", str(output_path)]
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 1
+
+
+def test_canva_cli_succeeds_when_output_generated_normally(tmp_path, monkeypatch):
+    """通常どおり出力が生成される場合は、canvaコマンドが正常終了することを確認する
+    （成果物チェックが正常系を巻き添えにしないことの確認）。"""
+    editable_path = tmp_path / "output" / "editable" / "lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages", "--mode", "generate",
+            "--requirements", "examples/requirements_ai_instagram.json",
+            "--output", str(editable_path),
+        ],
+    )
+    main()
+
+    output_path = tmp_path / "canva_design.md"
+    monkeypatch.setattr(
+        "sys.argv", ["cli", "canva", "--input", str(editable_path), "--output", str(output_path)]
+    )
+    main()
+
+    assert output_path.exists()
+    assert output_path.stat().st_size > 0

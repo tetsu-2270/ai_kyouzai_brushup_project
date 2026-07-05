@@ -8,9 +8,19 @@ from pathlib import Path
 from .canva_client import write_canva_sync_report
 from .canva_renderer import render_canva_design
 from .docx_renderer import write_docx
+from .execution_logger import ExecutionLogger, TeeStderr
 from .image_renderer import render_document_images
 from .import_source import import_source
 from .lesson_pages import LessonDocument, build_lesson_pages, render_review_report, write_lesson_pages_json
+from .ocr_environment import (
+    OCR_REQUIRED_MODES,
+    format_environment_report,
+    format_ocr_required_all_pages_empty_error,
+    format_ocr_required_japanese_missing_error,
+    format_ocr_required_tesseract_missing_error,
+    format_partial_pages_empty_warning,
+    get_ocr_environment_status,
+)
 from .parser import load_lesson_document, load_project
 from .pdf_renderer import write_pdf
 from .pptx_export_renderer import write_pptx_export
@@ -34,12 +44,18 @@ def write_text(path: str | Path, text: str) -> None:
     output_path.write_text(text, encoding="utf-8")
 
 
-def run_import_source(input_path: str, output_path: str | Path, assets_dir: str | Path | None = None) -> None:
-    """元資料(画像/PDF/PPTX)からimported_pages.json互換のJSONを生成して書き出す。"""
+def run_import_source(
+    input_path: str, output_path: str | Path, assets_dir: str | Path | None = None
+) -> dict[str, object]:
+    """元資料(画像/PDF/PPTX)からimported_pages.json互換のJSONを生成して書き出す。
+
+    戻り値の辞書（pages形式互換）は、build_all()がOCR前提チェックに使う。
+    """
     output_path = Path(output_path)
     resolved_assets_dir = Path(assets_dir) if assets_dir else output_path.parent / "assets"
     imported = import_source(input_path, resolved_assets_dir)
     write_text(output_path, json.dumps(imported, ensure_ascii=False, indent=2) + "\n")
+    return imported
 
 
 def _detect_input_kind(input_path: str) -> str:
@@ -62,8 +78,78 @@ def resolve_output_format(output_format: str, input_kind: str) -> str:
     return output_format
 
 
+def validate_generated_file(path: str | Path, label: str) -> None:
+    """成果物ファイルが実際に生成された（存在し、サイズが0でない）ことを検証する。
+
+    レンダラーが例外を投げずに空成果物だけ生成してしまう、あるいは処理の途中で書き込みが
+    スキップされてしまうようなケースを、正常終了扱いにしないための安全網（Phase 10.2追加修正）。
+    """
+    file_path = Path(path)
+    if not file_path.exists():
+        raise ValueError(f"{label}の成果物が生成されませんでした: {file_path}")
+    if file_path.stat().st_size == 0:
+        raise ValueError(f"{label}の成果物が空です: {file_path}")
+
+
+def validate_generated_json_pages(path: str | Path, pages_count: int, label: str) -> None:
+    """JSON成果物（imported_pages.json/lesson_pages.json等）について、ファイル自体の生成に
+    加え、取り込み・生成したpagesが0件でないことを検証する。
+
+    OCR自体の成否（各ページのlinesが空かどうか）は別の関心事であり、既存方針（`import-source`
+    単体では警告のうえ継続）に従う。ここで検証するのはあくまで「pagesの件数」であり、
+    「OCRでテキストが取れたか」ではない。
+    """
+    validate_generated_file(path, label)
+    if pages_count == 0:
+        raise ValueError(f"{label}の処理結果にページがありません: {path}")
+
+
+def _expected_output_paths(output_dir: Path, resolved_format: str) -> list[Path]:
+    """指定されたoutput-formatについて、生成されているべき成果物パスの一覧を返す
+    （`_verify_expected_outputs()`が「指定した形式の成果物が実際に生成されたか」を検証するのに使う）。
+    「json」はeditable中間ファイル自体が対象であり、別工程で既に生成されているためここでは対象外。
+    """
+    mapping: dict[str, list[Path]] = {
+        "image": [output_dir / "rendered"],
+        "pdf": [output_dir / "exports" / f"{_EXPORT_BASENAME}.pdf"],
+        "pptx": [output_dir / "exports" / f"{_EXPORT_BASENAME}.pptx"],
+        "docx": [output_dir / "exports" / f"{_EXPORT_BASENAME}.docx"],
+        "md": [output_dir / "exports" / f"{_EXPORT_BASENAME}.md"],
+        "canva": [output_dir / "canva" / "canva_design.md"],
+        "json": [],
+    }
+    if resolved_format == "all":
+        paths: list[Path] = []
+        for fmt in ("image", "pdf", "pptx", "docx", "md", "canva"):
+            paths.extend(mapping[fmt])
+        return paths
+    return mapping.get(resolved_format, [])
+
+
+def _verify_expected_outputs(output_dir: Path, resolved_format: str) -> None:
+    """`_generate_formatted_outputs()`実行後、指定したoutput-formatの成果物が実際に
+    生成されている（かつ空でない）かを検証する。生成されていない場合は「exit 0だが成果物が無い」
+    という実質失敗を防ぐため、ValueError（呼び出し元でexit 1になる）を送出する。
+    """
+    missing: list[str] = []
+    for path in _expected_output_paths(output_dir, resolved_format):
+        if path.name == "rendered":
+            if not path.is_dir() or not any(path.iterdir()):
+                missing.append(str(path))
+        elif not path.exists() or path.stat().st_size == 0:
+            missing.append(str(path))
+    if missing:
+        raise ValueError(
+            f"指定されたoutput-format({resolved_format})の成果物が生成されませんでした: {', '.join(missing)}"
+        )
+
+
 def _generate_formatted_outputs(
-    document: LessonDocument, output_dir: Path, resolved_format: str, font_path: str | None = None
+    document: LessonDocument,
+    output_dir: Path,
+    resolved_format: str,
+    font_path: str | None = None,
+    logger: ExecutionLogger | None = None,
 ) -> None:
     """editable/lesson_pages.json相当の正データから、指定形式の完成outputを生成する。
 
@@ -71,6 +157,7 @@ def _generate_formatted_outputs(
     「json」はeditable中間ファイル自体が対象のため、ここでは追加ファイルを生成しない。
     font_pathは画像output(rendered/・PPTX内の画像)の日本語テキスト合成に使うフォントを明示指定する
     （省略時は環境の日本語フォントを自動探索し、見つからなければ警告のうえPillow既定フォントを使う）。
+    生成後、指定した形式の成果物が実際に作られたかを検証する（実質失敗を正常終了扱いにしないため）。
     """
     needs_images = resolved_format in ("image", "pptx", "all")
     image_paths: list[Path] = []
@@ -88,6 +175,72 @@ def _generate_formatted_outputs(
     if resolved_format in ("canva", "all"):
         write_text(output_dir / "canva" / "canva_design.md", render_canva_design(document))
 
+    _verify_expected_outputs(output_dir, resolved_format)
+
+    if logger:
+        for path in _expected_output_paths(output_dir, resolved_format):
+            logger.record_generated_file(path)
+
+
+def _validate_ocr_precondition(
+    imported: dict[str, object], mode: str, allow_empty_ocr: bool, logger: ExecutionLogger | None = None
+) -> None:
+    """画像input + OCR必須モード(proofread/restructure)で、OCRが実質使えない・全ページ空の
+    まま「空データで成功」させないための事前チェック。`--allow-empty-ocr`で明示的に許可された
+    場合はスキップする（後方互換・テスト用途）。
+
+    PDF/PPTX入力はOCRではなくネイティブなテキスト抽出を使うため対象外（呼び出し側でinput_kindが
+    "image"の場合のみ呼び出す）。
+    """
+    if mode not in OCR_REQUIRED_MODES:
+        return
+
+    pages = imported.get("pages", [])
+    if not pages:
+        return
+
+    ocr_status = get_ocr_environment_status()
+    if logger:
+        logger.add_section("OCR", {
+            "tesseract_available": ocr_status["tesseract_available"],
+            "tesseract_path": ocr_status["tesseract_path"],
+            "tesseract_on_path": ocr_status["tesseract_on_path"],
+            "japanese_available": ocr_status["japanese_available"],
+            "brew_path": ocr_status["brew_path"],
+            "warnings": ocr_status["warnings"],
+        })
+
+    if allow_empty_ocr:
+        if logger:
+            logger.warn("--allow-empty-ocrが指定されているため、OCR前提チェックをスキップしました。")
+        return
+
+    if not ocr_status["tesseract_available"]:
+        message = format_ocr_required_tesseract_missing_error(mode, ocr_status)
+        print(message, file=sys.stderr)
+        if logger:
+            logger.error(message)
+        raise SystemExit(1)
+    if not ocr_status["japanese_available"]:
+        message = format_ocr_required_japanese_missing_error(mode)
+        print(message, file=sys.stderr)
+        if logger:
+            logger.error(message)
+        raise SystemExit(1)
+
+    empty_pages = [page for page in pages if not page.get("lines")]
+    if len(empty_pages) == len(pages):
+        message = format_ocr_required_all_pages_empty_error(mode)
+        print(message, file=sys.stderr)
+        if logger:
+            logger.error(message)
+        raise SystemExit(1)
+    if empty_pages:
+        message = format_partial_pages_empty_warning(len(empty_pages), len(pages))
+        print(message, file=sys.stderr)
+        if logger:
+            logger.warn(message)
+
 
 def build_all(
     input_path: str,
@@ -97,6 +250,8 @@ def build_all(
     output_format: str = "same",
     compat_output: bool = True,
     font_path: str | None = None,
+    allow_empty_ocr: bool = False,
+    logger: ExecutionLogger | None = None,
 ) -> None:
     """元資料(画像/PDF/PPTX)から成果物一式を一括生成する（build-allコマンドの本体）。
 
@@ -114,15 +269,53 @@ def build_all(
     直下に生成する。
 
     font_pathは画像output(rendered/・PPTX内の画像)の日本語テキスト合成に使うフォントを明示指定する。
+
+    画像input + `proofread`/`restructure`（OCR必須モード）でOCRが実質使えない場合
+    （Tesseract未導入・日本語言語データ無し・全ページOCR結果が空）は、警告のうえ空データのまま
+    成功させるのではなく、明確なエラーを出して非ゼロ終了する（Phase 10.1追加修正）。
+    `allow_empty_ocr=True`（`--allow-empty-ocr`）でこのチェックをスキップできる。
+
+    取り込みページが0件、または指定したoutput-formatの成果物が生成されない場合も、実質失敗を
+    正常終了扱いにしないためエラーにする（Phase 10.2）。
     """
     output_dir = Path(output_dir)
     assets_dir = output_dir / "assets"
     imported_pages_path = output_dir / "imported_pages.json"
+    input_kind = _detect_input_kind(input_path)
 
-    run_import_source(input_path, imported_pages_path, assets_dir)
+    if logger:
+        logger.add_section("INPUT", {
+            "input_path": str(input_path),
+            "input_kind": input_kind,
+            "mode": mode,
+            "output_format": output_format,
+            "output_dir": str(output_dir),
+        })
+
+    imported = run_import_source(input_path, imported_pages_path, assets_dir)
+    pages = imported.get("pages", [])
+
+    if logger:
+        logger.record_generated_file(imported_pages_path)
+        logger.add_section("INPUT_RESULT", {
+            "imported_pages": len(pages),
+            "ocr_success_pages": sum(1 for p in pages if p.get("lines")),
+            "ocr_empty_pages": sum(1 for p in pages if not p.get("lines")),
+        })
+
+    if not pages:
+        message = f"取り込み対象のページがありません（入力: {input_path}）。処理を継続できません。"
+        if logger:
+            logger.error(message)
+        raise ValueError(message)
+
+    if input_kind == "image":
+        _validate_ocr_precondition(imported, mode, allow_empty_ocr, logger=logger)
 
     document, _plan = build_lesson_pages(mode, str(imported_pages_path), requirements_path)
     write_lesson_pages_json(output_dir / "editable" / "lesson_pages.json", document)
+    if logger:
+        logger.record_generated_file(output_dir / "editable" / "lesson_pages.json")
 
     if compat_output:
         write_lesson_pages_json(output_dir / "compat" / "lesson_pages.json", document)
@@ -133,9 +326,11 @@ def build_all(
 
     write_scenario_outputs(output_dir / "scenario", document)
     write_text(output_dir / "review_report.md", render_review_report(document))
+    if logger:
+        logger.record_generated_file(output_dir / "review_report.md")
 
-    resolved_format = resolve_output_format(output_format, _detect_input_kind(input_path))
-    _generate_formatted_outputs(document, output_dir, resolved_format, font_path=font_path)
+    resolved_format = resolve_output_format(output_format, input_kind)
+    _generate_formatted_outputs(document, output_dir, resolved_format, font_path=font_path, logger=logger)
 
 
 def regenerate(
@@ -143,6 +338,7 @@ def regenerate(
     output_format: str,
     output_dir: str | Path | None = None,
     font_path: str | None = None,
+    logger: ExecutionLogger | None = None,
 ) -> None:
     """editable中間ファイル（例: output/editable/lesson_pages.json）から成果物を再生成する。
 
@@ -150,17 +346,42 @@ def regenerate(
     作り直すための導線。完成画像やPDFを直接編集するのではなく、この中間ファイルを編集して
     再生成することを想定する。font_pathは画像output(rendered/・PPTX内の画像)の日本語テキスト
     合成に使うフォントを明示指定する。
+
+    入力ファイルが存在しない・JSON構文が不正な場合は`load_lesson_document()`が
+    `FileNotFoundError`/`ValueError`を送出し、呼び出し元で非ゼロ終了になる。pagesが0件、または
+    指定したoutput-formatの成果物が生成されない場合も同様にエラーにする（Phase 10.2）。
     """
     editable_path = Path(input_path)
+
+    if logger:
+        logger.add_section("INPUT", {
+            "input_path": str(editable_path),
+            "output_format": output_format,
+        })
+
     document = load_lesson_document(editable_path)
+
+    if logger:
+        logger.add_section("INPUT_RESULT", {"pages": len(document.pages)})
+
+    if not document.pages:
+        message = f"editable中間ファイルにページがありません（入力: {editable_path}）。処理を継続できません。"
+        if logger:
+            logger.error(message)
+        raise ValueError(message)
+
     resolved_output_dir = Path(output_dir) if output_dir else editable_path.resolve().parent.parent
     resolved_format = "all" if output_format == "same" else output_format
-    _generate_formatted_outputs(document, resolved_output_dir, resolved_format, font_path=font_path)
+    _generate_formatted_outputs(document, resolved_output_dir, resolved_format, font_path=font_path, logger=logger)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="AI教材ブラッシュアップシステム")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    subparsers.add_parser(
+        "check-ocr", help="OCR環境(tesseract/日本語言語データ/Homebrew)を診断する"
+    )
 
     import_source_parser = subparsers.add_parser(
         "import-source", help="元資料(画像/PDF/PPTX)からimported_pages.json(pages形式)を生成"
@@ -204,6 +425,16 @@ def main() -> None:
         "--font-path",
         default=None,
         help="画像output(rendered//PPTX内画像)の日本語テキスト合成に使うフォントファイルのパス（省略時は環境の日本語フォントを自動探索）",
+    )
+    build_all_parser.add_argument(
+        "--allow-empty-ocr",
+        action="store_true",
+        default=False,
+        help=(
+            "画像input+proofread/restructureでOCRが実質使えない場合（Tesseract未導入・"
+            "日本語言語データ無し・全ページOCR結果が空）でも、エラー終了せず空データのまま処理を"
+            "続行する（既定は無効＝エラー終了する。テスト・開発用途向け）"
+        ),
     )
 
     regenerate_parser = subparsers.add_parser(
@@ -301,42 +532,90 @@ def main() -> None:
 
     args = parser.parse_args()
 
+    # lesson-pagesはproofread/restructure/generateの3モードを1つのサブコマンドで扱うため、
+    # ログファイル名はコマンド名ではなくモード名を使う（logs/..._generate.log等。
+    # 詳細はCLAUDE_RULES.md「ログ出力の共通設計ルール」参照）。
+    log_command = args.mode if args.command == "lesson-pages" else args.command
+    logger = ExecutionLogger(log_command, sys.argv[1:])
+    original_stderr = sys.stderr
+    tee_stderr = TeeStderr(original_stderr)
+    sys.stderr = tee_stderr
+
+    exit_code = 0
+    error: BaseException | None = None
     try:
-        if args.command == "import-source":
-            run_import_source(args.input, args.output, args.assets_dir)
+        if args.command == "check-ocr":
+            ocr_status = get_ocr_environment_status()
+            logger.add_section("OCR", {
+                "tesseract_available": ocr_status["tesseract_available"],
+                "tesseract_path": ocr_status["tesseract_path"],
+                "japanese_available": ocr_status["japanese_available"],
+                "brew_available": ocr_status["brew_available"],
+                "brew_path": ocr_status["brew_path"],
+                "ocr_ready": ocr_status["ocr_ready"],
+            })
+            print(format_environment_report(ocr_status))
+        elif args.command == "import-source":
+            imported = run_import_source(args.input, args.output, args.assets_dir)
+            logger.add_section("INPUT", {"input_path": args.input})
+            logger.add_section("INPUT_RESULT", {"pages": len(imported.get("pages", []))})
+            validate_generated_json_pages(args.output, len(imported.get("pages", [])), "import-source")
+            logger.record_generated_file(args.output)
         elif args.command == "build-all":
             build_all(
                 args.input, args.mode, args.output_dir, args.requirements,
                 args.output_format, args.compat_output, args.font_path,
+                args.allow_empty_ocr, logger=logger,
             )
         elif args.command == "regenerate":
-            regenerate(args.input, args.output_format, args.output_dir, args.font_path)
+            regenerate(args.input, args.output_format, args.output_dir, args.font_path, logger=logger)
         elif args.command == "lesson-pages":
             document, plan = build_lesson_pages(args.mode, args.input, args.requirements)
             write_lesson_pages_json(args.output, document)
+            logger.add_section("INPUT", {"input_path": args.input, "mode": args.mode})
+            logger.add_section("INPUT_RESULT", {"pages": len(document.pages)})
+            validate_generated_json_pages(args.output, len(document.pages), "lesson-pages")
+            logger.record_generated_file(args.output)
             if args.plan_output and plan is not None:
                 write_text(args.plan_output, json.dumps(plan, ensure_ascii=False, indent=2) + "\n")
+                logger.record_generated_file(args.plan_output)
         elif args.command == "review-report":
             document = load_lesson_document(args.input)
             write_text(args.output, render_review_report(document))
+            validate_generated_file(args.output, "review-report")
+            logger.record_generated_file(args.output)
         elif args.command == "generate":
             document = load_lesson_document(args.input)
             write_text(args.output, render_brushup(document))
+            validate_generated_file(args.output, "generate")
+            logger.record_generated_file(args.output)
         elif args.command == "canva":
             document = load_lesson_document(args.input)
             write_text(args.output, render_canva_design(document))
+            validate_generated_file(args.output, "canva")
+            logger.record_generated_file(args.output)
         elif args.command == "docx":
             document = load_lesson_document(args.input)
             write_docx(args.output, document)
+            validate_generated_file(args.output, "docx")
+            logger.record_generated_file(args.output)
         elif args.command == "pdf":
             document = load_lesson_document(args.input)
             write_pdf(args.output, document)
+            validate_generated_file(args.output, "pdf")
+            logger.record_generated_file(args.output)
         elif args.command == "scenario":
             document = load_lesson_document(args.input)
             write_scenario_outputs(args.output_dir, document)
+            scenario_dir = Path(args.output_dir)
+            for scenario_file in ("scenario.json", "scenario.md", "voicevox.txt", "scene.json"):
+                validate_generated_file(scenario_dir / scenario_file, "scenario")
+            logger.record_generated_file(args.output_dir)
         elif args.command == "canva-sync":
             project = load_project(args.input)
             write_canva_sync_report(args.output, project)
+            validate_generated_file(args.output, "canva-sync")
+            logger.record_generated_file(args.output)
         elif args.command == "wp-publish":
             project = load_project(args.input)
             categories = [c.strip() for c in args.categories.split(",") if c.strip()]
@@ -349,9 +628,24 @@ def main() -> None:
                 tag_names=tags,
                 status=args.status,
             )
+            validate_generated_file(args.output, "wp-publish")
+            logger.record_generated_file(args.output)
     except (FileNotFoundError, ValueError) as e:
         print(f"エラー: {e}", file=sys.stderr)
-        raise SystemExit(1) from e
+        logger.error(str(e))
+        exit_code = 1
+        error = e
+    except SystemExit as e:
+        exit_code = e.code if isinstance(e.code, int) else 1
+        error = e
+    finally:
+        sys.stderr = original_stderr
+        logger.finalize(exit_code, captured_stderr=tee_stderr.captured)
+
+    if exit_code:
+        if isinstance(error, SystemExit):
+            raise error
+        raise SystemExit(exit_code) from error
 
 
 if __name__ == "__main__":

@@ -191,3 +191,112 @@ Phase 9.2で確定したoutput構成（`editable/`/`rendered/`/`canva/`/`exports
 ### 今回実装しなかったもの（意図的に対象外）
 
 画像合成の高度なデザインエンジン化（装飾性の高いレイアウト自体）、`--font-path`の設定ファイル化、PPTX exportの高度なレイアウト再現。
+
+## Phase 10.1: OCR前提ソフトウェアの事前チェック・PATH診断・セットアップ導線・OCR空振り防止
+
+`input/source`の実データ（画像27枚）で`build-all --mode proofread`を実行したところ、全ページOCR結果が空になる問題が発生した。原因調査の結果、tesseract本体が環境に無く（Homebrewは`/opt/homebrew/bin/brew`に存在するがPATHに無い状態）、OCRが実質的に失敗していたことが分かった。これを「黙って空データのまま成功扱いにする」のではなく、分かりやすく検知・案内するようにした。
+
+- [x] `src/ocr_environment.py`を新設: `check_tesseract_environment()`/`check_homebrew_environment()`（PATH上・既知パス（`/opt/homebrew/bin/`・`/usr/local/bin/`）・バージョン・利用可能言語を確認）、`get_ocr_environment_status()`（両者を統合し`ocr_ready`/`path_suggestions`/`warnings`/`errors`を算出）、`resolve_ocr_lang()`（`jpn+eng`/`jpn`/`eng`の選択）を実装
+- [x] `src/import_source.py`の`_try_ocr()`を改善: 環境診断で見つかったtesseractパス（PATHに無くても既知パスで見つかっていれば使う）と対応言語をpytesseractに明示的に渡すようにした
+- [x] `import_images()`にOCR前提の事前チェックを追加: OCR環境が整っていない場合、標準エラー出力に警告（英語+日本語）を表示したうえで処理を継続。全ページのOCR結果が空だった場合も追加の警告を表示する。**既存の`generate`/`build-all`/`regenerate`/個別CLI導線や、Tesseract未導入のCI・開発環境でも動作し続けられるよう、非ゼロ終了にはしていない**（後方互換上のトレードオフ。詳細は完了報告参照）
+- [x] `python3 -m src.cli check-ocr`サブコマンドを追加: tesseract/Homebrewの状態と対応手順を表示するOCR環境診断コマンド
+- [x] `scripts/check_ocr_env.sh`を追加: シェルベースの同等診断（インストールは行わず、確認・案内のみ。個々のコマンドが無くても最後まで実行する）
+- [x] `scripts/setup_ocr_macos.sh`を追加（任意）: Homebrew経由でTesseract・日本語言語データを実際にインストールするスクリプト。ユーザーが明示的に実行するものであり、CLI本体・Claude Codeが自動実行することはない
+- [x] ドキュメント更新（README.md/`docs/01_requirements.md`/`docs/02_architecture.md`/`docs/04_output_spec.md`/`docs/08_user_acceptance_test.md`）: OCR前提の事前チェック・`check-ocr`の使い方・PATH診断・よくある状態と対処を追加
+- [x] テスト追加（`tests/test_ocr_environment.py`21件、`tests/test_import_source.py`+6件、`tests/test_output_formats.py`+4件）: tesseract/Homebrewの検出パターン（PATH上/既知パスのみ/無し）、jpn言語データ有無、PATH案内文言、OCR結果が`imported_pages.json`/`editable/lesson_pages.json`に反映されること、全ページ空の警告、`check-ocr`コマンドの実行確認
+
+### 今回実装しなかったもの・意図的なトレードオフ（**Phase 10.1追加修正で解消。下記参照**）
+
+~~OCR環境が整っていない場合の非ゼロ終了（exit 1）は実装していない。理由: 既存テストスイート・本開発環境自体がtesseract未導入であり、非ゼロ終了にすると`generate`/`build-all`の既存テスト（ダミー画像を使うもの多数）が軒並み失敗し、「pytestがすべて通る」「既存導線が壊れていない」という受け入れ条件と直接衝突するため。~~ → 既存テストがTesseract未導入環境でも通り続けられるよう、`tests/conftest.py`にOCR環境を「利用可能」とみなす既定fixtureを追加することで両立させ、`build-all`の`proofread`/`restructure`は非ゼロ終了するように変更した（詳細は次項）。
+
+## Phase 10.1 追加修正: OCR必須モードでOCR不能時は正常終了しない
+
+Phase 10.1で追加した警告は表示されるものの、`build-all --mode proofread`はTesseract未導入・全ページOCR空でも`exit 0`のまま「成功」してしまい、校正対象のテキストが無いまま処理が完了する問題が残っていた。`proofread`/`restructure`にとってOCRテキストは処理の前提であるため、これを非ゼロ終了に変更した。
+
+- [x] `src/ocr_environment.py`に`OCR_REQUIRED_MODES = {"proofread", "restructure"}`と、非ゼロ終了用エラーメッセージ生成関数（`format_ocr_required_tesseract_missing_error`/`format_ocr_required_japanese_missing_error`/`format_ocr_required_all_pages_empty_error`/`format_partial_pages_empty_warning`）を追加
+- [x] `src/cli.py`に`_validate_ocr_precondition()`を追加し、`build_all()`の`import-source`ステップ直後（`lesson_pages`生成前）で呼び出す。画像input（`_detect_input_kind()`が`"image"`）かつ`--allow-empty-ocr`未指定の場合のみ動作し、Tesseract未導入・`jpn`無し・全ページOCR結果が空のいずれかで`SystemExit(1)`にする。一部ページのみ空の場合は警告のみで継続する
+- [x] `build-all`に`--allow-empty-ocr`オプションを追加（既定は無効）。指定した場合のみ上記チェックをスキップし、従来通り（Phase 10.1時点の警告のみ）の挙動になる
+- [x] `run_import_source()`が取り込んだpages辞書を返すように変更（`_validate_ocr_precondition()`が取り込み結果の`lines`を見て判定するため）
+- [x] PDF/PPTX inputはネイティブテキスト抽出を使うため、このチェックの対象外（`_detect_input_kind()`で判定）
+- [x] `tests/conftest.py`を新設: OCR環境を既定で「利用可能」とみなし、`_try_ocr()`もダミーの非空テキストを返すautouse fixtureを追加。OCRの有無を直接検証しないテスト（画像output・`--output-format`・`--no-compat-output`・`--font-path`等、Tesseract未導入のこの開発環境でも動作する必要がある既存テスト）が、新しい非ゼロ終了チェックの巻き添えにならないようにした。OCR環境診断自体を検証する`tests/test_ocr_environment.py`と、`_try_ocr()`の実装そのものを検証する2テストは、`@pytest.mark.real_ocr`でこのfixtureを無効化し、実装を直接検証する
+- [x] `pyproject.toml`に`real_ocr`マーカーを登録
+- [x] テスト更新: `test_build_all_prints_warning_when_tesseract_missing_for_image_input`（警告のみで継続、を期待する古いテスト）を`test_build_all_fails_when_tesseract_missing_for_image_input_proofread`（`SystemExit(1)`を期待する新しいテスト）に置き換え
+- [x] テスト追加（`tests/test_output_formats.py`に6件）: Tesseract無し/jpn無し/全ページ空はエラー終了、一部ページ空は警告して継続、`--allow-empty-ocr`でチェックをスキップ、PDF inputはこのチェックの対象外
+- [x] ドキュメント更新（README.md/`docs/01_requirements.md`/`docs/04_output_spec.md`/`docs/08_user_acceptance_test.md`）: `build-all`のOCR必須モードチェック・`--allow-empty-ocr`・エラー終了時の挙動を明記
+
+### 今回実装しなかったもの（意図的に対象外）
+
+`lesson-pages`単体コマンド（`build-all`を経由せず、既存のpages形式JSONを直接渡す経路）にはこのOCR必須チェックを追加していない。理由: `lesson-pages`は「元資料を画像から取り込む」処理そのものを行わず、渡されたJSONがOCR由来かどうかを区別する情報を持たないため（個別CLI導線を壊さない方針を優先）。同様の理由で、単体の`import-source`コマンドも警告のみで非ゼロ終了にはしていない。
+
+## Phase 10.2: 成功判定の再点検・実行ログ出力追加・ログ仕様の共通設計化
+
+Phase 10.1のOCR必須チェックと同じ観点で、他の処理にも「exit code 0だが実質失敗している」状態が残っていないか点検した。あわせて、実行内容・警告・失敗理由を後から追えるよう`logs/`ディレクトリへの実行ログ出力を追加し、ログ仕様をプロジェクト共通設計ルールとして明文化した。
+
+### 成功判定の点検結果
+
+- [x] **「pagesが0件でも成功扱い」だった箇所を発見**: `regenerate`が読み込んだ`document.pages`が空でも、そのまま（空の）成果物を生成して`exit 0`で終了していた。`build_all()`も、理論上0ページが取り込まれた場合（画像ディレクトリは既にチェック済みだが、PDF/PPTXで0ページの場合など）に同様の問題が起こり得た → 非ゼロ終了に変更
+- [x] **「指定output-formatの成果物が生成されなくても成功扱い」だった箇所を発見**: レンダラーが何らかの理由で成果物を書き出せなかった場合でも、`build-all`/`regenerate`はそのまま`exit 0`で終了していた（従来、レンダラー自体が例外を投げない限り検知できなかった）→ `_verify_expected_outputs()`を追加し、生成後に実際にファイルが存在するか検証、無ければ非ゼロ終了に変更
+- [x] 確認の結果、**既に正しく非ゼロ終了していた箇所**（変更不要）: 入力パス不存在（`FileNotFoundError`）、画像ディレクトリが空・対応ファイルが1つも無い場合（`import_source()`の既存の`ValueError`）、`regenerate`の入力ファイル不存在・JSON構文エラー（`parser.py`の既存の`FileNotFoundError`/`ValueError`）、OCR必須モードでOCR不能・全ページOCR空（Phase 10.1で対応済み）
+- [x] `check-ocr`は診断コマンドとして意図的に`exit 0`のまま維持（環境不足を診断すること自体が目的であり、診断結果が悪いこと自体を失敗として扱わない）
+
+### 実行ログ出力の実装
+
+- [x] `src/execution_logger.py`を新設: `ExecutionLogger`（ログファイル作成・セクション記録・warning/error収集・generated_files記録・finalize時にファイル書き出し）、`TeeStderr`（標準エラー出力を元のストリームへ書きつつログ用にも蓄積。既存の`print(..., file=sys.stderr)`呼び出し箇所を個別に変更せずに済む）
+- [x] `src/cli.py`の`main()`を、コマンドの成否に関わらず必ずログを書き出すよう変更（`try/except/finally`で`SystemExit`/`FileNotFoundError`/`ValueError`いずれの終了経路でも`logger.finalize()`を呼ぶ）
+- [x] ログ出力対象: `build-all`・`regenerate`・`check-ocr`・`lesson-pages`（`--mode`に応じて`generate`/`proofread`/`restructure`をログファイル名にする）・個別CLI（`import-source`/`canva`/`docx`/`pdf`/`scenario`/`canva-sync`/`wp-publish`も基本的なINPUT/OUTPUT記録つきでログを出す）
+- [x] `build_all()`/`regenerate()`/`_validate_ocr_precondition()`/`_generate_formatted_outputs()`に`logger`引数（省略可）を追加し、INPUT/INPUT_RESULT/OCR/OUTPUT/WARNINGS/ERRORSの各セクションを記録するようにした
+- [x] ログ出力先は環境変数`AI_KYOUZAI_LOGS_DIR`で上書き可能にした（既定は`logs/`）。自動テストが実際のプロジェクトの`logs/`を汚さないよう、`tests/conftest.py`のautouse fixtureがテストごとに一時ディレクトリへ差し替える
+- [x] ログディレクトリ作成・書き込みに失敗しても本処理は止めない（標準エラー出力に警告を表示するのみ）
+
+### logs/のGit・ZIP管理
+
+- [x] `logs/.gitkeep`を追加し、`.gitignore`に`logs/*`＋`!logs/.gitkeep`を追加（`logs/`ディレクトリ自体はGit管理対象、ログファイル本体は対象外）
+- [x] `scripts/make_release_zip.sh`を確認: 元々`logs/`を除外する設定が無かったため、追加の変更なしでログファイルもZIPに含まれることを確認済み（コメントを追記し意図を明記）
+- [x] `input/`・`output/`は引き続きGit・ZIP対象外のまま変更なし
+
+### 共通設計ルールへの反映
+
+- [x] `CLAUDE_RULES.md`に「4. ログ出力の共通設計ルール」「5. 成功判定の方針（実質失敗を正常終了扱いにしない）」を新設。「6. 今後のPhase指示文での参照方法」の参照文言にログ仕様・成功判定の方針を追加
+- [x] `docs/04_output_spec.md`に「実行ログ（logs/）の標準仕様」「成功判定の方針」の2節を新設（`build-all`/`regenerate`各節にも失敗条件を追記）
+- [x] `docs/02_architecture.md`に`execution_logger.py`を追加
+- [x] `docs/08_user_acceptance_test.md`に「9. 実行ログ（logs/）と成功判定の考え方」を新設
+- [x] ドキュメント更新（README.md/`docs/01_requirements.md`/`docs/README.md`/`docs/09_editable_regenerate_guide.md`）: logs/仕様・成功判定方針への言及を追加
+
+### テスト追加・更新
+
+- [x] `tests/test_execution_logger.py`（新規5件）: ログファイル生成・必須セクションの内容・ファイル名のサニタイズ・ログディレクトリ作成失敗時の非致命的な警告・`TeeStderr`の動作
+- [x] `tests/test_output_formats.py`（+11件）: `build-all`/`generate`(lesson-pages)/`regenerate`/`check-ocr`のログファイル生成（成功時・失敗時）、pages 0件時のエラー終了（`regenerate`）、input空・対応ファイル無し時のエラー終了（`build-all`）、指定output-format成果物未生成時のエラー終了（`regenerate`）
+- [x] `tests/conftest.py`に`isolate_execution_logs` fixtureを追加（テストが実プロジェクトの`logs/`を汚さないようにする）
+
+### 今回実装しなかったもの・制限事項
+
+- 個別CLI（`import-source`/`canva`/`docx`/`pdf`/`scenario`/`canva-sync`/`wp-publish`）のログは、INPUT/OUTPUTの基本記録のみで、`build-all`/`regenerate`ほど詳細なセクション（OCR要約等）は持たない（各コマンドの性質上、詳細記録の必要性が低いため最小限にとどめた）
+- JSON構造化ログ（機械可読形式）は未実装。今回はテキストログ＋構造化された見出しのみ（要件通り）
+
+## Phase 10.2 追加修正: 個別CLIの成果物未生成チェックとログの機密情報対策
+
+Phase 10.2完了報告で「個別CLIの成果物未生成検証は追加していない（リスク低のため）」としていたが、今回の目的（実質失敗を正常終了扱いにしない）に照らすと不十分だったため追加対応した。あわせて、`logs/*.log`がZIP対象になる以上、ログに秘密情報が残らないようにする対策を追加した。
+
+### 個別CLIの成果物未生成チェック
+
+- [x] `src/cli.py`に`validate_generated_file(path, label)`（成果物が存在し、サイズが0でないことを検証）・`validate_generated_json_pages(path, pages_count, label)`（上記に加え、pagesが0件でないことを検証）を追加
+- [x] `_verify_expected_outputs()`（`build-all`/`regenerate`が使う既存の成果物検証）にサイズ0チェックを追加（従来は存在確認のみだった）
+- [x] 個別CLIの`main()`ディスパッチに検証を追加: `import-source`（`imported_pages.json`存在+pages非0件）、`lesson-pages`（`lesson_pages.json`存在+pages非0件）、`review-report`/`generate`/`canva`/`docx`/`pdf`/`canva-sync`/`wp-publish`（各出力ファイルの存在+サイズ非0）、`scenario`（`scenario.json`/`scenario.md`/`voicevox.txt`/`scene.json`の4ファイルすべて存在+サイズ非0）
+- [x] 対象外にした個別CLIは無し。`main()`が扱う全個別CLIサブコマンドに検証を追加した
+
+### ログの機密情報マスク
+
+- [x] `src/execution_logger.py`に`mask_secrets(text)`を追加。`password`/`passwd`/`secret`/`token`/`api_key`/`apikey`/`access_key`/`access_token`/`authorization`/`bearer`/`client_secret`/`refresh_token`/`private_key`（大文字小文字を区別しない）を含むキーの値を`[REDACTED]`に置換する
+- [x] CLIオプション形式（`--api-key sk-xxxx`/`--api-key=sk-xxxx`）、key=value/key: value形式（`password=abc123`）、HTTPヘッダ形式（`Authorization: Bearer xxxxx`）のいずれにも対応
+- [x] `ExecutionLogger.finalize()`で、ログ本文を組み立てた最終テキストに対して`mask_secrets()`を適用してから書き出すようにした（args・各セクション・stderr・warnings・errorsのすべてを一括でカバーする、最も取りこぼしの少ない実装方針）
+- [x] `Authorization: Bearer xxxxx`のような「ヘッダ名+スキーム名+トークン」の3要素構成で、ヘッダ名用のkey=valueパターンとBearer用パターンが二重にマッチして不自然な二重マスクになる問題を、negative lookaheadで回避
+
+### テスト追加・更新
+
+- [x] `tests/test_output_formats.py`（+7件）: `lesson-pages`のpages0件時エラー終了、`import-source`のpages0件時エラー終了、`canva`/`docx`/`pdf`の成果物未生成時エラー終了、正常系が壊れていないことの確認
+- [x] `tests/test_execution_logger.py`（+15件）: `mask_secrets()`の各パターン（CLIオプション/key=value/Bearer/大文字小文字/無関係な単語への誤爆防止）、`ExecutionLogger`がargs・stderr・エラーメッセージ内の秘密情報を実際にマスクして書き出すことの確認
+
+### 今回実装しなかったもの・制限事項
+
+- 個別CLIについて「明らかに入力が無い」「JSONが壊れている」場合は既存の`parser.py`の例外処理で非ゼロ終了になる（変更なし）
+- ログマスクは「値が空白区切りの単一トークンで表現される」ケースを対象としており、PEM形式の秘密鍵など複数行にまたがる値は部分的なマスクにとどまる（今回の受け入れ条件が明示する形式はすべて単一トークンのため対象外とした）

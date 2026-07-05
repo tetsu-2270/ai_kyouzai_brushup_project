@@ -196,14 +196,58 @@ rendered/ や exports/ を再生成
 - 元資料由来の画像・ページ画像・source assetsを落とさない。PDF・PPTX・画像などから取り込んだ元画像・ページ画像は、可能な限り`source_image`/`source_assets`（既存設計）として保持する。
 - `source_page_no`は内部メタデータとして保持する。通常、購入者・受講者向けの完成output（`rendered/`・`exports/`・`canva/`・DOCX/PDF/動画シナリオ）には表示しない。制作者が確認したい場合は`review-report`コマンドを使う。
 
-### 4. 今後のPhase指示文での参照方法
+### 4. ログ出力の共通設計ルール（Phase 10.2で追加）
+
+アプリ実行時は、プロジェクト直下の`logs/`配下に実行ログを出す。**この仕様は今後のPhaseでも維持すべき標準仕様**であり、詳細な形式は[`docs/04_output_spec.md`](docs/04_output_spec.md)「プロジェクト標準output構成」の`logs/`節を正とする。
+
+```text
+logs/
+  .gitkeep
+  YYYYMMDD_HHMMSS_<command>.log
+```
+
+- ログ出力対象: `build-all`・`generate`（`lesson-pages --mode generate`）・`regenerate`・`check-ocr`。個別CLI（`import-source`/`lesson-pages`の他モード/`canva`/`docx`/`pdf`/`scenario`/`canva-sync`/`wp-publish`）でも同様にログを出す。
+- 失敗時（非ゼロ終了・例外発生時）にも可能な限りログを残す。
+- 警告を出したうえで処理を継続する場合も、必ずログに残す（警告を出しっぱなしで記録が残らない状態にしない）。
+- Git管理: `logs/`ディレクトリ自体（`logs/.gitkeep`）はGit管理対象。**ログファイル本体（`logs/*.log`）はGit管理対象外**（`.gitignore`の`logs/*`＋`!logs/.gitkeep`）。
+- ZIP管理: `logs/`配下のログファイルは**ZIP対象に含める**（`input/`・`output/`は引き続きZIP対象外のまま）。
+
+**機密情報マスク（Phase 10.2追加修正）**: `logs/*.log`はZIP対象になるため、CLI引数・標準エラー出力・エラーメッセージ等に秘密情報が混ざっていても、ログへ生値を残さない。`password`/`passwd`/`secret`/`token`/`api_key`/`apikey`/`access_key`/`access_token`/`authorization`/`bearer`/`client_secret`/`refresh_token`/`private_key`（大文字小文字を区別しない）というキー・文字列を含む値は、ログ書き出し前に`[REDACTED]`へ置換する（`src/execution_logger.py`の`mask_secrets()`。ログファイルへ書き出す直前の最終テキストに対して適用し、CLI引数・セクション内容・stderr内容・警告・エラーのいずれも漏れなくマスク対象にする）。`.env`や認証情報ファイルの中身自体をログに出力する処理は無い。
+
+### 5. 成功判定の方針（実質失敗を正常終了扱いにしない）
+
+Phase 10.1のOCR必須チェックと同じ考え方を、他の処理にも適用する。**「exit code 0だが目的を満たしていない」「警告は出ているが正常終了扱いでよいか曖昧」という状態を作らない。**
+
+非ゼロ終了にすべきもの（例）:
+
+```text
+- 入力ファイル・入力ディレクトリが存在しない
+- 入力ディレクトリが空、または対応ファイルが1つも無い
+- 取り込み・読み込んだpagesが0件
+- OCR必須モード(proofread/restructure)でOCR不能・全ページOCR結果が空
+- 指定したoutput-formatの成果物が実際には生成されていない
+- JSON構文エラー
+```
+
+警告のうえ処理を継続してよいもの（例）:
+
+```text
+- 一部ページだけOCR結果が空
+- 一部source_image参照が無いが、テキスト出力は可能
+- compat出力が無効化されている（--no-compat-output）
+- フォント未指定で環境の代替フォントを使用
+```
+
+`check-ocr`は診断コマンドであり、OCR環境が不足していてもそれ自体は`exit 0`でよい（診断自体が例外で壊れた場合のみ非ゼロ終了にする）。
+
+### 6. 今後のPhase指示文での参照方法
 
 今後のPhase指示文では、このルールを毎回書き下す代わりに、以下のように短く参照してよい。
 
 ```text
 CLAUDE_RULES.md および docs/04_output_spec.md に定義済みの
-output構成・editable中間ファイル・source情報の扱いを維持してください。
-今回のPhaseでは、それらの既存設計を変更しないでください。
+output構成・editable中間ファイル・source情報の扱い・ログ出力仕様・成功判定の方針を
+維持してください。今回のPhaseでは、それらの既存設計を変更しないでください。
 ```
 
 ## 重要な前提

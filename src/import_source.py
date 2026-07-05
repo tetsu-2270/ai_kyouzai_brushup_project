@@ -1,26 +1,40 @@
 from __future__ import annotations
 
 import shutil
+import sys
 from pathlib import Path
 from typing import Any
+
+from .ocr_environment import (
+    format_all_pages_empty_warning,
+    format_precondition_warning,
+    get_ocr_environment_status,
+    resolve_ocr_lang,
+)
 
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
 
-def _try_ocr(image_path: Path) -> str:
+def _try_ocr(image_path: Path, ocr_status: dict[str, Any]) -> str:
     """画像からテキストを抽出する。pytesseractまたはtesseract本体が無い環境では空文字を返す。
 
     OCR精度の向上は対象外。まずは画像を入力として扱えること・画像を落とさないことを優先し、
     OCRが使えない環境でも取り込み自体は成立するようにする。
+    tesseractがPATHに無くても既知のインストール先（`ocr_status["tesseract_path"]`）で
+    見つかっていれば、そのパスを明示的に指定して実行を試みる。
     """
+    if not ocr_status["tesseract_available"]:
+        return ""
     try:
         import pytesseract
         from PIL import Image
     except ImportError:
         return ""
+    pytesseract.pytesseract.tesseract_cmd = ocr_status["tesseract_path"]
+    lang = resolve_ocr_lang(ocr_status["languages"])
     try:
         with Image.open(image_path) as image:
-            return pytesseract.image_to_string(image, lang="jpn+eng")
+            return pytesseract.image_to_string(image, lang=lang)
     except Exception:
         return ""
 
@@ -46,8 +60,8 @@ def _copy_asset(src: Path, assets_dir: Path, dest_name: str) -> str:
     return f"assets/{dest_name}"
 
 
-def _page_from_image(index: int, image_path: Path, assets_dir: Path) -> dict[str, Any]:
-    ocr_text = _try_ocr(image_path)
+def _page_from_image(index: int, image_path: Path, assets_dir: Path, ocr_status: dict[str, Any]) -> dict[str, Any]:
+    ocr_text = _try_ocr(image_path, ocr_status)
     title, summary = _derive_title_and_summary(ocr_text, index, image_path.name)
     dest_name = f"page_{index:03d}{image_path.suffix.lower()}"
     source_image = _copy_asset(image_path, assets_dir, dest_name)
@@ -66,12 +80,26 @@ def _page_from_image(index: int, image_path: Path, assets_dir: Path) -> dict[str
 
 
 def import_images(image_paths: list[Path], assets_dir: Path, project_title: str) -> dict[str, Any]:
-    """画像ファイル群を、ファイル名順に1画像=1元ページとして取り込む。"""
+    """画像ファイル群を、ファイル名順に1画像=1元ページとして取り込む。
+
+    OCR環境（tesseract/日本語言語データ）を事前に一度だけ診断する。環境が整っていない場合は、
+    黙って全ページ空のまま処理を続けるのではなく、標準エラー出力に警告を表示したうえで処理を継続する
+    （既存の個別CLI・build-all・regenerate・generateモード等の導線を壊さないための方針。
+    詳細は`docs/04_output_spec.md`「OCR前提の事前チェック」を参照）。
+    """
+    ocr_status = get_ocr_environment_status()
+    if not ocr_status["ocr_ready"]:
+        print(format_precondition_warning(ocr_status), file=sys.stderr)
+
     sorted_paths = sorted(image_paths, key=lambda p: p.name)
     pages = [
-        _page_from_image(index, path, assets_dir)
+        _page_from_image(index, path, assets_dir, ocr_status)
         for index, path in enumerate(sorted_paths, start=1)
     ]
+
+    if pages and all(not page["lines"] for page in pages):
+        print(format_all_pages_empty_warning(), file=sys.stderr)
+
     return {"project_title": project_title, "target_reader": "教材制作者", "pages": pages}
 
 

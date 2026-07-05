@@ -27,6 +27,89 @@ output/
 
 以降の各節は、この標準構成の詳細仕様（生成条件・スキーマ・CLIオプション等）を記載する。
 
+## 実行ログ（`logs/`）の標準仕様（Phase 10.2で追加・共通設計ルール）
+
+`output/`とは別に、プロジェクト直下に`logs/`ディレクトリを置き、CLI実行のたびに実行ログを出力する。`input/`/`output/`と異なり、**`logs/`ディレクトリ自体はGit管理対象**とし、中身のログファイルのみを除外する。
+
+```text
+logs/
+  .gitkeep                            # Git管理対象（logs/ディレクトリ自体を追跡するため）
+  YYYYMMDD_HHMMSS_<command>.log       # 実行ログ本体。Git管理対象外
+```
+
+管理方針:
+
+| 対象 | Git | ZIP |
+|---|---|---|
+| `logs/.gitkeep` | 対象 | 対象 |
+| `logs/*.log`（ログ本体） | **対象外** | **対象**（`scripts/make_release_zip.sh`は`logs/`を除外しない） |
+| `input/` | 対象外 | 対象外 |
+| `output/` | 対象外 | 対象外 |
+
+`.gitignore`は以下のように設定する（`logs/*`で中身を除外しつつ、`!logs/.gitkeep`で`.gitkeep`だけ例外的に追跡する）。
+
+```gitignore
+logs/*
+!logs/.gitkeep
+```
+
+### ログファイル名
+
+`logs/YYYYMMDD_HHMMSS_<command>.log`。`<command>`はCLIサブコマンド名（`build-all`/`regenerate`/`check-ocr`/`import-source`/`canva`/`docx`/`pdf`/`scenario`/`canva-sync`/`wp-publish`等）。ただし`lesson-pages`は`--mode`（`proofread`/`restructure`/`generate`）が実質的な処理内容を表すため、モード名をファイル名に使う（例: `lesson-pages --mode generate` → `logs/..._generate.log`）。ファイル名に使えない文字は`_`に置換する。
+
+### ログの内容
+
+`src/execution_logger.py`の`ExecutionLogger`が、以下の見出し（セクション）を持つテキストログを組み立てる。
+
+```text
+===== START =====       # timestamp・command・args
+===== ENVIRONMENT =====  # python・cwd
+===== INPUT =====        # input_path・output_dir・mode・output_format等（コマンドにより異なる）
+===== INPUT_RESULT ===== # 取り込み・読み込んだpages数、OCR成功/空ページ数等
+===== OCR =====          # OCR環境診断の要約（画像inputの場合のみ）
+===== OUTPUT =====       # generated_files（生成した主要成果物一覧）
+===== WARNINGS =====     # 警告のうえ処理を継続した内容
+===== ERRORS =====       # エラー内容（非ゼロ終了時）
+===== STDERR =====       # 標準エラー出力に実際に表示した内容（そのまま）
+===== RESULT =====       # exit_code・ended_at
+```
+
+ログディレクトリの作成・ログファイルの書き込みに失敗しても、本処理は止めない（標準エラー出力に警告を表示するのみ）。
+
+### ログ出力対象コマンド
+
+`build-all`・`regenerate`・`check-ocr`・`lesson-pages`（3モードとも）・個別CLI（`import-source`/`canva`/`docx`/`pdf`/`scenario`/`canva-sync`/`wp-publish`）。すべて`src/cli.py`の`main()`が一括して実行開始〜終了（成功・失敗いずれも）でログを書き出す。
+
+### ログの機密情報マスク（Phase 10.2追加修正・共通設計ルール）
+
+`logs/*.log`は配布用ZIPの対象になる（本節冒頭の管理方針の表を参照）ため、CLI引数・stderr出力・エラーメッセージ等に秘密情報が混ざっていても、ログへ生値を残さない。`src/execution_logger.py`の`mask_secrets()`が、ログファイルへ書き出す直前の最終テキストに対してマスク処理を行う（`START`のargs・各セクションの内容・`STDERR`・`WARNINGS`・`ERRORS`のいずれも対象）。
+
+マスク対象キーワード（大文字小文字を区別しない）:
+
+```text
+password / passwd / secret / token / api_key / apikey / access_key /
+access_token / authorization / bearer / client_secret / refresh_token / private_key
+```
+
+マスク例:
+
+```text
+--api-key sk-xxxx            → --api-key [REDACTED]
+--token=secret-value         → --token=[REDACTED]
+password=abc123              → password=[REDACTED]
+Authorization: Bearer xxxxx  → Authorization: Bearer [REDACTED]
+```
+
+`.env`や認証情報ファイルの中身自体をログへ出力する処理は存在しない。マスクは「値が単一トークン（空白区切り）で表現される」ケースを対象としており、複数行にまたがる秘密情報（PEM形式の秘密鍵など）は部分的なマスクにとどまる場合がある点に留意する。
+
+## 成功判定の方針（実質失敗を正常終了扱いにしない。Phase 10.2で追加）
+
+Phase 10.1のOCR必須チェック（`proofread`/`restructure`でTesseract不能・全ページOCR空ならエラー終了）と同じ考え方を、他の失敗ケースにも適用する。詳細は[`CLAUDE_RULES.md`](../CLAUDE_RULES.md)「成功判定の方針」を参照。要点:
+
+- 非ゼロ終了にすべきもの: 入力ファイル・ディレクトリが存在しない/空/対応ファイル無し、取り込み・読み込んだpagesが0件、OCR必須モードでOCR不能・全ページ空、指定したoutput-formatの成果物が実際に生成されない、JSON構文エラー。
+- 警告のうえ継続してよいもの: 一部ページのみOCR空、一部source_image参照欠落（テキスト出力は可能）、`--no-compat-output`によるcompat出力の無効化、フォント未指定時の代替フォント使用。
+- `check-ocr`は診断コマンドのため、OCR環境が不足していても`exit 0`でよい（診断自体が例外で壊れた場合のみ非ゼロ終了）。
+
 ## 元資料の自動取り込み（`import-source` / `build-all`）
 
 作成者向けの主導線は、元資料（画像/PDF/PPTX）を`input/source/`に置いて`build-all`コマンドを実行することである（詳細は`docs/08_user_acceptance_test.md`、README「クイックスタート（作成者向け）」を参照）。`imported_pages.json`/`lesson_pages.json`はいずれもシステムが自動生成する中間ファイルであり、**作成者が手作業で作るものではない**。
@@ -35,12 +118,64 @@ output/
 
 | 元資料 | 取り込み方法 | 保存されるアセット |
 |---|---|---|
-| 画像（`.png`/`.jpg`/`.jpeg`/`.webp`） | ディレクトリ配下をファイル名順に1画像=1ページ。OCR（`pytesseract`。tesseract本体が無い環境ではテキスト空でフォールバック）でテキスト抽出 | `output/assets/page_NNN.<ext>`（元画像そのもの） |
+| 画像（`.png`/`.jpg`/`.jpeg`/`.webp`） | ディレクトリ配下をファイル名順に1画像=1ページ。OCR（`pytesseract`+tesseract本体）でテキスト抽出。OCR前提の事前チェックは後述 | `output/assets/page_NNN.<ext>`（元画像そのもの） |
 | PDF（`.pdf`） | `pymupdf`でページ単位にテキスト抽出＋ページ画像化 | `output/assets/page_NNN.png`（ページ全体のラスタ画像） |
 | PPTX（`.pptx`） | `python-pptx`でスライド単位にテキスト抽出＋スライド内埋め込み画像を抽出（スライド全体のレンダリングは非対応） | `output/assets/slide_NNN_M.<ext>`（スライド内の埋め込み画像） |
 | PPT（`.ppt`旧形式） | 未対応（明確なエラーメッセージを返す） | - |
 
-`imported_pages.json`の各ページは、`page_no`/`source_image`/`source_assets`/`title`/`summary`/`lines`/`improvement_points`/`canva.layout_type`/`canva.main_visual`/`canva.notes`を持つ（`docs/03_data_format.md`のスキーマに準拠）。`source_image`は1ページの主要な参照画像、`source_assets`はPPTXのスライド内に複数の画像がある場合などの追加アセット一覧（画像・PDF取り込みでは通常空配列）。
+`imported_pages.json`の各ページは、`page_no`/`source_image`/`source_assets`/`title`/`summary`/`lines`/`improvement_points`/`canva.layout_type`/`canva.main_visual`/`canva.notes`を持つ（`docs/03_data_format.md`のスキーマに準拠）。`source_image`は1ページの主要な参照画像、`source_assets`はPPTXのスライド内に複数の画像がある場合などの追加アセット一覧（画像・PDF取り込みでは通常空配列）。OCRが成功した場合、抽出テキストは`lines`（1行1要素の`{"speaker": "", "text": ...}`）に格納され、`title`/`summary`の自動生成にも使われる。`lines`は`lesson-pages`実行時に`body`へ変換され、`proofread`/`restructure`の校正・再構成対象になる。
+
+### OCR前提の事前チェック（Phase 10.1）
+
+画像取り込みはOCR（Tesseract）に依存する。Tesseract本体・日本語言語データ・Homebrewが無い、またはPATHに通っていない環境では、OCRが実行できず全ページのテキストが空のまま`proofread`/`restructure`が実質機能しなくなる問題があった。これを防ぐため、`src/ocr_environment.py`にOCR環境診断機能を追加した。
+
+- `check_tesseract_environment()`: `tesseract`コマンドがPATH上にあるか、無ければ`/opt/homebrew/bin/tesseract`・`/usr/local/bin/tesseract`（Homebrewでの典型的なインストール先）に存在するかを確認する。バージョン・利用可能言語（`tesseract --list-langs`）・日本語(`jpn`)の有無も取得する。
+- `check_homebrew_environment()`: `brew`コマンドについて同様にPATH上・`/opt/homebrew/bin/brew`・`/usr/local/bin/brew`を確認する。
+- `get_ocr_environment_status()`: 上記2つをまとめ、`ocr_ready`（tesseractがPATH上にあり日本語言語データもある状態）、`path_suggestions`（Apple Siliconなら`eval "$(/opt/homebrew/bin/brew shellenv)"`、Intel Macなら`eval "$(/usr/local/bin/brew shellenv)"`のような`brew shellenv`によるPATH設定コマンド）、`warnings`/`errors`を含む辞書を返す。
+
+`import_images()`（`import-source`/`build-all`が画像を取り込む際に使う）は、処理前に`get_ocr_environment_status()`を1回呼び出し、`ocr_ready`でない場合は標準エラー出力に警告を表示したうえで処理を継続する。処理後、全ページで`lines`が空だった場合は追加の警告を表示する。この層の処理はモード（`proofread`/`restructure`）を意識しない共通処理であり、**単体の`import-source`コマンドは警告のみで非ゼロ終了にしない**（`import-source`はテキスト抽出専用コマンドであり、抽出結果をどう使うかは呼び出し側次第のため）。
+
+Tesseractが既知パスには見つかるがPATHに無い場合、`_try_ocr()`はその既知パスを`pytesseract.pytesseract.tesseract_cmd`に明示設定して実行を試みる（PATHが通っていなくても、既知パスで見つかった実体があればOCR自体は実行できる）。使用する言語は`resolve_ocr_lang()`が`tesseract --list-langs`の結果に応じて`jpn+eng`/`jpn`/`eng`を選ぶ。
+
+#### `build-all`のOCR必須モードチェック（Phase 10.1追加修正）
+
+`build-all`がサポートする`--mode`は`proofread`・`restructure`のいずれも、画像から抽出したテキストの校正・再構成を行うことが目的である（`OCR_REQUIRED_MODES = {"proofread", "restructure"}`）。画像inputでOCRが実質使えない、または全ページ抽出結果が空のまま「成功したように見えるが中身が空」というのは、`build-all`にとって望ましくない。そこで`build_all()`は、`import-source`ステップの直後に以下を追加でチェックし、**該当する場合は非ゼロ終了（`exit 1`）する**（`import-source`単体の警告とは別に、`cli.py`の`_validate_ocr_precondition()`が実施する）。
+
+| 条件（画像input + proofread/restructureの場合のみ） | 挙動 |
+|---|---|
+| Tesseract本体が使えない | `exit 1`。インストール手順・PATH設定案内を表示 |
+| 日本語言語データ(`jpn`)が無い | `exit 1`。`brew install tesseract-lang`等の案内を表示 |
+| 取り込みページ全件で`lines`が空 | `exit 1`。`check-ocr`での診断を促す |
+| 一部ページのみ`lines`が空 | `exit 0`のまま警告のみ表示し処理を継続（「何ページ中何ページが空か」を明記） |
+
+`--allow-empty-ocr`（既定は無効）を指定すると、上記チェックをすべてスキップして従来通り処理を継続できる（テスト・開発用途）。**通常の利用でこのフラグを指定しない限り、空のOCR結果のまま成功することは無い。**
+
+このチェックは画像input（`_detect_input_kind()`が`"image"`と判定した場合）のみに適用される。PDF（`pymupdf`によるネイティブテキスト抽出）・PPTX（`python-pptx`によるネイティブテキスト抽出）はTesseractに依存しないため対象外であり、`generate`モード（そもそも画像を取り込まない）や、`regenerate`・個別CLI（`lesson-pages`に既存のpages形式/lesson_pages形式JSONを直接渡す経路）にも影響しない。
+
+`build-all`は、以下の場合もエラー終了する（Phase 10.2で追加。「成功判定の方針」参照）。
+
+- 取り込んだ`pages`が0件（入力ディレクトリが空・対応ファイルが1つも無い場合は、この時点より前に`import-source`自体がエラーにする）
+- 指定した`--output-format`の成果物が実際には生成されなかった場合
+
+#### OCR環境診断コマンド・スクリプト
+
+```bash
+python3 -m src.cli check-ocr
+```
+
+`tesseract`/`brew`のPATH・既知パス・バージョン・利用可能言語・日本語言語データの有無・対応が必要な手順を表示する（診断のみ。インストールは行わない）。
+
+```bash
+bash scripts/check_ocr_env.sh
+```
+
+同様の診断をシェルスクリプトとして実行する（`PATH`表示、`which`、既知パスの`ls`、`tesseract --version`/`--list-langs`を、いずれかが無くても最後まで実行する）。
+
+```bash
+bash scripts/setup_ocr_macos.sh
+```
+
+（任意）macOSでHomebrew経由にTesseract・日本語言語データを実際にインストールするスクリプト。**ユーザーが明示的に実行するものであり、CLI本体やClaude Codeが自動実行することはない。** Homebrew自体が無い場合はインストールを行わず、案内のみ表示する。
 
 `build-all`は`import-source`（→`imported_pages.json`+`output/assets/`）→`lesson-pages`（→`lesson_pages.json`）→`generate`/`canva`/`docx`/`pdf`/`scenario`/`review-report`を内部で順に実行する。`--mode`は`proofread`/`restructure`のみ（`generate`は元資料を使わないモードのため`build-all`の対象外。`generate`を使う場合は`lesson-pages --mode generate`を直接使う）。
 
@@ -118,6 +253,12 @@ python3 -m src.cli regenerate --input output/editable/lesson_pages.json --output
 `output/editable/lesson_pages.json`（またはユーザーが編集した同形式のJSON）を読み込み、`--output-format`で指定した完成outputを再生成する。`--output-dir`を省略した場合、`--input`の2階層上（`output/editable/lesson_pages.json`なら`output/`）を出力先とする。`--output-format`の既定値は`all`（`same`が指定された場合も`all`として扱う。再生成時は元の入力形式という概念が無いため）。
 
 `output/editable/lesson_pages.json`の編集してよい項目・編集しない方がよい項目、`regenerate`の具体例（画像/PDF/Canva指示書/全形式/日本語フォント指定）は[`docs/09_editable_regenerate_guide.md`](09_editable_regenerate_guide.md)を参照。
+
+`regenerate`は以下の場合にエラー終了する（Phase 10.2で追加。「成功判定の方針」参照）。
+
+- `--input`のファイルが存在しない、またはJSON構文が不正
+- 読み込んだ`pages`が0件
+- 指定した`--output-format`の成果物が実際には生成されなかった場合
 
 ## 正データと派生出力の関係
 `lesson_pages.json`（`docs/03_data_format.md`とは別スキーマ）が正データであり、以下の出力はすべてこのファイルから派生生成される。`brushup.md`と`canva_design.md`が同じ`lesson_pages.json`から生成されるため、ページ番号・タイトルは常に一致する。

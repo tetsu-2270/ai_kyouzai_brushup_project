@@ -8,7 +8,7 @@
 | [`01_requirements.md`](01_requirements.md) | **現行要件** | 実装済みCLIコマンド、3モードの方針、`lesson_pages.json`正データ方針、`input/`/`output/`除外方針など |
 | [`02_architecture.md`](02_architecture.md) | **現行アーキテクチャ** | 実在する`src/`モジュール構成、実在するデータモデル、処理フロー |
 | [`03_data_format.md`](03_data_format.md) | データ形式（開発者向け） | `pages`形式JSONのスキーマ（`imported_pages.json`もこの形式。作成者は直接作らない） |
-| [`04_output_spec.md`](04_output_spec.md) | **CLI・出力仕様** | 元資料自動取り込み（`import-source`/`build-all`）、完成output形式選択・editable中間ファイル・再生成（`--output-format`/`regenerate`。Phase 9）、正式output（`editable/`/`canva/`/`exports/`）と後方互換output（`compat/`）の整理（Phase 9.1〜9.2）、`lesson_pages.json`のスキーマ、各派生出力の生成元、restructureプラン・`review-report`のCLI仕様 |
+| [`04_output_spec.md`](04_output_spec.md) | **CLI・出力仕様** | 元資料自動取り込み（`import-source`/`build-all`）、OCR前提の事前チェック・`check-ocr`診断・`build-all`のOCR必須モード（`proofread`/`restructure`）がOCR不能時にエラー終了する仕様・`--allow-empty-ocr`（Phase 10.1）、実行ログ（`logs/`）の標準仕様・成功判定の方針（Phase 10.2）、完成output形式選択・editable中間ファイル・再生成（`--output-format`/`regenerate`。Phase 9）、正式output（`editable/`/`canva/`/`exports/`）と後方互換output（`compat/`）の整理（Phase 9.1〜9.2）、`lesson_pages.json`のスキーマ、各派生出力の生成元、restructureプラン・`review-report`のCLI仕様 |
 | [`05_implementation_tasks.md`](05_implementation_tasks.md) | 実装タスク進捗 | Phase 1〜9の完了状況チェックリスト |
 | [`06_claude_code_workflow.md`](06_claude_code_workflow.md) | Claude Code運用手順 | ZIP展開〜実装〜確認までの一般的な進め方 |
 | [`07_api_integration_design.md`](07_api_integration_design.md) | 将来のAPI連携設計メモ | OCR/ブラッシュアップ/Canva設計のAPI化構想（未実装・設計のみ） |
@@ -28,6 +28,8 @@
 - **元資料が無く、要件定義だけから新規に教材を作りたい（新規構築）** → `README.md`「`lesson-pages`の3モード（v2.0）」の`generate`モード（`build-all`は元資料前提のため対象外）
 - **output構成・editable中間ファイル・source情報の扱いという共通設計ルールを確認したい** → `04_output_spec.md`「プロジェクト標準output構成（Phase 9.2時点で確定・共通設計ルール）」（要約は`CLAUDE_RULES.md`「プロジェクト設計ルール」にもある）
 - **`output/editable/lesson_pages.json`を編集して再生成したい・日本語フォントの文字化けを直したい** → `09_editable_regenerate_guide.md`
+- **画像取り込み後にテキストが空になる・OCRがうまくいかない・`build-all --mode proofread`がエラー終了する** → `python3 -m src.cli check-ocr`または`bash scripts/check_ocr_env.sh`で診断（`04_output_spec.md`「OCR前提の事前チェック」、`08_user_acceptance_test.md`「OCRについての注意」参照）
+- **なぜエラーになったか・実行内容を後から確認したい** → `logs/YYYYMMDD_HHMMSS_<command>.log`（`04_output_spec.md`「実行ログ（logs/）の標準仕様」、`08_user_acceptance_test.md`「実行ログと成功判定の考え方」参照）
 - **過去のレビュー経緯を知りたい** → `99_implementation_review_brief.md`（ただし現行仕様の正ではない点に注意）
 
 ## `05_*` と `99_*` の運用ルール（重要）

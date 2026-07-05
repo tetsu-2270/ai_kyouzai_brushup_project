@@ -3,6 +3,8 @@ set -euo pipefail
 
 # レビュー・配布用ZIPを作成する。
 # input/ (利用者投入データ) と output/ (生成物) は、機密情報混入防止・容量削減のため常に除外する。
+# logs/ (実行ログ) は意図的にZIP対象に含める（.gitignoreではlogs/*を除外しているが、
+# ZIPでは除外しない。詳細はdocs/04_output_spec.md「プロジェクト標準output構成」参照）。
 
 cd "$(dirname "$0")/.."
 

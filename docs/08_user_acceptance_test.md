@@ -174,7 +174,70 @@ Use --font-path to specify a Japanese font.
 
 ## 6. OCRについての注意
 
-画像・PDFからのテキスト抽出には`pytesseract`（Python側は導入済み）に加えて、**OS側にtesseract本体のインストールが必要**です（例: macOSなら`brew install tesseract tesseract-lang`）。tesseract本体が無い環境では、テキストは空のまま取り込まれ、各ページの`canva.notes`に「OCRでテキストを抽出できませんでした。元画像を直接参照してください。」という注記が入ります。画像・元ページ画像自体は`output/assets/`に必ず保存されるため、OCRが使えない場合でも取り込みや成果物生成自体は失敗しません。OCR精度そのものの向上はPhase 8の対象外です。
+画像からのテキスト抽出には`pytesseract`（Python側は導入済み）に加えて、**OS側にtesseract本体・日本語言語データのインストールが必要**です。
+
+### 6.1 事前診断（推奨）
+
+`input/source`に画像を置いて`build-all`を実行する前に、OCR環境を診断してください。
+
+```bash
+python3 -m src.cli check-ocr
+# または
+bash scripts/check_ocr_env.sh
+```
+
+`tesseract`/日本語言語データ(`jpn`)/Homebrewが、PATH上にあるか・既知のインストール先（macOSなら`/opt/homebrew/bin/`または`/usr/local/bin/`）にあるだけか・そもそも無いかを切り分けて表示します。
+
+### 6.2 よくある状態と対処
+
+| 状態 | 対処 |
+|---|---|
+| tesseractが無い | macOS/Homebrew: `brew install tesseract tesseract-lang` |
+| tesseractは既知パスにあるがPATHに無い | `eval "$(/opt/homebrew/bin/brew shellenv)"`（Intel Macは`/usr/local/bin/brew`）を実行。永続化するなら`~/.zprofile`に追記 |
+| jpn言語データが無い | `brew install tesseract-lang`。`tesseract --list-langs`で確認 |
+| Homebrewが既知パスにあるがPATHに無い | 上記と同じ`brew shellenv`コマンドを実行 |
+| Homebrewが無い | https://brew.sh の手順でインストール、または手動でtesseractをインストール |
+
+（任意）macOSでHomebrew経由に実際にインストールする場合は`bash scripts/setup_ocr_macos.sh`を使えます。**ユーザーが明示的に実行するスクリプトであり、CLI本体が自動実行することはありません。**
+
+### 6.3 単体の`import-source`コマンドの挙動
+
+tesseract本体・日本語言語データが無い、またはPATHに無い環境で単体の`import-source`（画像input）を実行すると、**標準エラー出力に分かりやすい警告（英語+日本語）を表示したうえで処理を継続**します。黙って全ページ空のまま成功扱いにはしません。各ページの`canva.notes`にも「OCRでテキストを抽出できませんでした。元画像を直接参照してください。」という注記が入ります。画像・元ページ画像自体は`output/assets/`に必ず保存されるため、OCRが使えない場合でも取り込み自体は失敗しません（`import-source`はテキスト抽出専用コマンドであり、抽出結果を校正・再構成に使うかどうかは呼び出し側次第のため、警告のみで処理を継続します）。
+
+### 6.4 `build-all`（proofread/restructure）の挙動：OCR不能なら失敗する（Phase 10.1追加修正）
+
+**`build-all`は`proofread`・`restructure`のいずれのモードでも、画像inputかつOCRが実質使えない状態では成功しません。** 以下のいずれかに該当する場合、分かりやすいエラーメッセージを表示して**エラー終了（`exit 1`）**します。
+
+- Tesseract本体が使えない（未導入、またはPATH・既知のインストール先のいずれにも見つからない）
+- 日本語言語データ(`jpn`)が無い
+- 取り込んだ全ページで`lines`（OCR結果）が空
+
+一部のページだけOCR結果が空の場合は、エラーにはせず「何ページ中何ページが空だったか」を警告したうえで処理を継続します。
+
+```text
+$ python3 -m src.cli build-all --input input/source --mode proofread --output-dir output
+ERROR: mode=proofread requires OCR text, but Tesseract is not available.
+Install Tesseract and Japanese language data, then run again.
+
+If Homebrew is installed but not on PATH:
+  eval "$(/opt/homebrew/bin/brew shellenv)"
+
+Then:
+  brew install tesseract
+  brew install tesseract-lang
+
+If you want to proceed anyway with empty OCR text (e.g. for testing), pass --allow-empty-ocr.
+$ echo $?
+1
+```
+
+どうしても空のOCR結果のまま処理を続けたい場合（テスト・開発用途）は、`--allow-empty-ocr`を指定してください。**通常の利用でこのフラグを付けない限り、空のOCR結果のまま「成功」することはありません。**
+
+```bash
+python3 -m src.cli build-all --input input/source --mode proofread --output-dir output --allow-empty-ocr
+```
+
+このチェックは画像inputにのみ適用されます。PDF・PPTXはOCRではなくネイティブなテキスト抽出（`pymupdf`/`python-pptx`）を使うため対象外です。`generate`モード（画像を取り込まない）・`regenerate`・個別CLI（`lesson-pages`に既存のJSONを直接渡す経路）にも影響しません。OCR精度そのものの向上はPhase 8時点・Phase 10.1時点ともに対象外です。
 
 ## 7. 開発者向け: 内部形式を直接使いたい場合
 
@@ -186,3 +249,25 @@ Use --font-path to specify a Japanese font.
 - 個人情報・未公開の教材内容が含まれる場合は特に取り扱いに注意してください。
 - 気になった点は`docs/feedback_template.md`に記録し、次フェーズの着手判断の材料にしてください。
 - 複数の教材・複数のモードで試す場合は、`output/`を上書きする前に別ディレクトリ（`--output-dir output_v2`等）にすると比較しやすくなります。
+
+## 9. 実行ログ（`logs/`）と成功判定の考え方（Phase 10.2で追加）
+
+コマンド実行のたびに、プロジェクト直下の`logs/`に実行ログ（`logs/YYYYMMDD_HHMMSS_<command>.log`）が残ります。「なぜエラーになったか」「どのページでOCRが空だったか」等を後から確認したい場合は、このログを見てください。`logs/`ディレクトリ自体はGit管理対象ですが、ログファイル本体（`logs/*.log`）はGit管理対象外です（`input/`/`output/`と同様にコミットされません）。配布用ZIP（`scripts/make_release_zip.sh`）には、`input/`/`output/`とは異なり**ログファイルも含まれます**。
+
+ログファイルはZIPで配布され得るため、**CLI引数・stderr出力・エラー内容に`password`/`token`/`api_key`/`secret`/`authorization`等の秘密情報らしき値が含まれていても、ログ書き出し時に`[REDACTED]`へ自動的にマスクされます**（Phase 10.2追加修正）。`.env`や認証情報ファイルの中身自体をログへ出す処理はありません。
+
+**「exit code 0だが実質失敗している」状態を避ける方針**を取っています。以下は非ゼロ終了（コマンドが失敗扱い）になります。
+
+- 入力ファイル・入力ディレクトリが存在しない、または対応ファイルが1つも無い
+- 取り込み・読み込んだページ数が0件（`import-source`/`lesson-pages`/`build-all`/`regenerate`いずれも）
+- `proofread`/`restructure`でOCRが実質使えない、または全ページOCR結果が空（詳細は「6. OCRについての注意」参照）
+- 指定した`--output-format`の成果物、または個別CLI（`canva`/`docx`/`pdf`等）の出力ファイルが実際には生成されなかった・空だった場合
+- JSON構文エラー
+
+一方、以下は警告のうえ処理を継続します（ただし必ずログには残ります）。
+
+- 一部ページのみOCR結果が空
+- `--no-compat-output`によるcompat出力の無効化
+- フォント未指定時に環境の代替フォントを使用する場合
+
+`check-ocr`は環境診断コマンドのため、OCR環境が不足していても通常は`exit 0`です（診断自体が壊れた場合のみ非ゼロ終了）。

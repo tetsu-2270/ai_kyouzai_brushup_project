@@ -126,3 +126,6 @@ python3 -m src.cli build-all --input input/source --output-format image --font-p
 - **regenerateがエラーになる**: JSON構文が壊れていないか確認してください（`python3 -m json.tool output/editable/lesson_pages.json`で構文チェックできます）。
 - **画像の日本語が文字化けする**: `--font-path`で日本語対応フォントを明示指定してください（上記「5. 日本語フォントについて」参照）。
 - **どのファイルが正式outputか分からない**: [`docs/04_output_spec.md`](04_output_spec.md)「プロジェクト標準output構成」を参照してください。
+- **画像取り込み直後から`body`が空になっている（`title`が「取り込みページN」のまま）**: OCR（Tesseract）が使えていない可能性があります。`python3 -m src.cli check-ocr`または`bash scripts/check_ocr_env.sh`で診断してください（詳細は[`docs/04_output_spec.md`](04_output_spec.md)「OCR前提の事前チェック」参照）。この場合も`source_image`は保持されているため、editable上で`title`/`summary`/`body`を手動で書き起こして`regenerate`することもできます。
+- **`build-all --mode proofread`/`restructure`がエラー終了する（`ERROR: mode=... requires OCR text`等）**: 画像inputでOCRが実質使えない状態（Tesseract未導入・日本語言語データ無し・全ページOCR結果が空）です。`check-ocr`で原因を確認し、Tesseract・日本語言語データを導入してから再実行してください。テスト・開発用途でどうしても空のOCR結果のまま続けたい場合のみ`--allow-empty-ocr`を指定できます。
+- **なぜエラーになったか・どこでOCRが空になったかを後から確認したい**: `regenerate`/`build-all`実行のたびに`logs/YYYYMMDD_HHMMSS_<command>.log`へ実行ログが残ります（Phase 10.2）。入力・OCR環境の要約・警告・エラー・生成した成果物一覧が記録されているので、うまくいかなかった実行のログを確認してください。詳細は[`docs/04_output_spec.md`](04_output_spec.md)「実行ログ（logs/）の標準仕様」を参照。
