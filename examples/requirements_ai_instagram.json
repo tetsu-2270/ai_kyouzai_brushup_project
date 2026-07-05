@@ -1,0 +1,20 @@
+{
+  "theme": "50〜60代向けAIインスタ投稿入門",
+  "target_audience": "AI初心者の50〜60代",
+  "goal": "Instagram投稿を自分で作れるようにする",
+  "reader_problem": "AIに興味はあるが、何から始めればよいか分からない",
+  "promised_value": "AIを使って無理なく投稿を作れるようになる",
+  "tone": "やさしく、安心感があり、専門用語を避ける",
+  "page_count": 10,
+  "output_style": "教材PDFとInstagram投稿画像",
+  "must_include": [
+    "AIは難しくないこと",
+    "投稿文の作り方",
+    "画像作成の考え方",
+    "継続のコツ"
+  ],
+  "must_not_include": [
+    "必ず毎日投稿するという表現",
+    "高額ツールが必須という表現"
+  ]
+}

@@ -1,5 +1,9 @@
 # 03 データ形式
 
+> 本ドキュメントが扱うのは、`lesson-pages`コマンドの`proofread`/`restructure`モードで使う**入力側**（`--input`）のJSON形式（`pages`形式）です。正データである`lesson_pages.json`自体のスキーマ（`metadata`/`source_page_no`/`role`等を含む）は[`docs/04_output_spec.md`](04_output_spec.md)を参照してください。3モード（`proofread`/`restructure`/`generate`）の全体像は[`docs/01_requirements.md`](01_requirements.md)を参照してください。`generate`モードは本フォーマットではなく`requirements.json`（README参照）のみを使います。
+>
+> **作成者がこのJSONを直接手作業で作る必要はありません。** 元資料（画像/PDF/PPTX）から`import-source`/`build-all`コマンドが自動生成する`imported_pages.json`もこの`pages`形式です（詳細は`docs/04_output_spec.md`「元資料の自動取り込み」、`docs/08_user_acceptance_test.md`を参照）。本ドキュメントは主に開発者・自動テスト向けにスキーマそのものを定義します。
+
 ## JSON形式
 
 ```json
@@ -10,6 +14,7 @@
     {
       "page_no": 1,
       "source_image": "page_01.png",
+      "source_assets": [],
       "title": "記事名・番号",
       "summary": "このページの概要",
       "lines": [
@@ -30,6 +35,8 @@
   ]
 }
 ```
+
+`source_assets`は任意項目（省略時は空配列）。`source_image`以外に保持している関連画像（PPTXのスライド内に複数の埋め込み画像がある場合など）の一覧。
 
 ## 話者分類ルール
 - 状況説明者: ナレーション、背景説明、記事説明

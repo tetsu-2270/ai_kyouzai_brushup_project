@@ -1,36 +1,100 @@
 # 02 アーキテクチャ設計
 
+> 本ドキュメントは現状実装（Phase 1〜8）に合わせて更新済みです。
+
 ## 全体構成
 
 ```text
-input/
-  raw_images/             # 元画像
-  transcripts/            # 文字起こし済みテキスト
+input/                       # (Git管理対象外) 利用者が投入する元ファイル置き場
+  source/                     # import-source/build-allの--input。元資料（画像/PDF/PPTX）を置く
+  raw_images/                 # wp-publishの--image-dirデフォルト参照先（画像アップロード用）
 examples/
-  sample_pages.json       # サンプル入力
+  sample_pages.json                 # 基本サンプル入力（pages形式。開発者・自動テスト向け）
+  sample_pages_extended.json        # 拡張サンプル入力（3話者会話・未設定項目）
+  requirements_ai_instagram.json    # 要件定義サンプル（restructure/generateの--requirements用）
 src/
-  cli.py                  # CLI入口
-  models.py               # データ構造
-  parser.py               # 入力JSON読み込み
-  renderer.py             # Markdown生成
-  canva_renderer.py       # Canva設計書生成
-output/
-  brushup.md              # 教材ブラッシュアップ設計書
-  canva_design.md         # Canva向け設計書
+  cli.py                     # CLI入口。import-source / build-all / lesson-pages / review-report / generate /
+                              # canva / docx / pdf / scenario / canva-sync / wp-publish の11サブコマンド
+  import_source.py           # 元資料(画像/PDF/PPTX)からのテキスト・画像自動取り込み（imported_pages.json+画像アセット生成）
+  models.py                  # 入力(pages形式)のデータ構造・バリデーション、requirements.jsonのデータ構造・バリデーション
+  lesson_pages.py             # 正データlesson_pages.jsonのデータ構造、3モード(proofread/restructure/generate)の分岐、restructureの再構成プラン生成・適用、派生フィールド算出
+  parser.py                  # 入力JSON読み込み（pages形式/lesson_pages形式を自動判定）、requirements.json読み込み
+  renderer.py                # lesson_pages.jsonからbrushup.md生成
+  canva_renderer.py          # lesson_pages.jsonからcanva_design.md生成（元画像/参考画像の参照表示を含む）
+  docx_renderer.py           # lesson_pages.jsonからDOCX生成
+  pdf_renderer.py            # lesson_pages.jsonからPDF生成
+  scenario_renderer.py       # lesson_pages.jsonから動画生成用シナリオ4形式を生成
+  env_config.py               # .env読み込み共通ユーティリティ
+  canva_client.py             # 【任意機能・モック雛形】Canva Connect API連携
+  wordpress_client.py         # 【任意機能・モック雛形】WordPress REST API連携
+scripts/
+  run_sample.sh               # サンプル入力から一連の出力を生成するデモスクリプト
+  make_release_zip.sh         # レビュー・配布用ZIPを作成（input//output/等を自動除外）
+tests/                       # pytestテスト一式
+output/                       # (Git管理対象外) 実行結果の生成物置き場。すべて再生成可能な派生物・中間ファイル
+  imported_pages.json          # import-sourceが生成する中間ファイル（pages形式互換。手作業で作らない）
+  assets/                      # 元画像・元ページ画像・スライド埋め込み画像
+prompts/                     # OCR・ブラッシュアップ・Canva用プロンプト集（import-sourceのOCRを使わず人手でAIに投入する運用向け）
 ```
 
 ## データ処理フロー
-1. JSONでページ情報を受け取る。
-2. ページ番号順に並べる。
-3. 文字起こし・登場人物・改善方針を構造化する。
-4. 教材ブラッシュアップ設計書を生成する。
-5. Canva向けレイアウト指示を生成する。
+
+```text
+元資料（画像/PDF/PPTX） in input/source/
+        │
+        ▼ import-source（build-allが内部で自動実行）
+output/imported_pages.json (pages形式互換) + output/assets/
+        │
+        ├─────────────────────────────────────────────┐
+source_pages.json (pages形式・開発者向け直接指定も可)  ┤
+requirements.json (任意/必須)                          ┘
+                                ├─→ lesson-pages --mode proofread|restructure ─┐
+requirements.json (必須)  ──→ lesson-pages --mode generate ───────────────────┤
+                                                                               ▼
+                                                                     lesson_pages.json (正データ)
+                                                                               │
+                              ┌───────────────┬───────────────┬───────────────┼───────────────┬──────────────┐
+                              ▼               ▼               ▼               ▼               ▼              ▼
+                          brushup.md   canva_design.md      *.docx          *.pdf      scenario/一式   review_report.md
+```
+
+1. （元資料がある場合）`import-source`が画像/PDF/PPTXからテキスト・画像を自動取り込み、`imported_pages.json`（pages形式互換）+`output/assets/`を生成する（`src/import_source.py`）。`build-all`はこのステップを内部で自動実行する。
+2. `pages`形式JSON（`imported_pages.json`または`docs/03_data_format.md`のJSON）またはlesson_pages形式JSONを読み込む（`parser.py`）。
+3. `--mode`に応じて`lesson_pages.py`が正データを構築する。
+   - `proofread`: 元ページを1:1で引き継ぎ、`metadata.mode=proofread`を付与。`source_image`/`source_assets`も引き継ぐ。
+   - `restructure`: 元ページから中間表現（`SourcePageSummary`）を抽出し、再構成プラン（`build_restructure_plan`）→ 本文組み立て（`apply_restructure_plan`）の2段階でページを再構成。`source_image`/`source_assets`もoperationごとのルールで引き継ぐ（`docs/04_output_spec.md`参照）。
+   - `generate`: `requirements.json`のみからルールベースで教材のたたき台を生成（元資料が無いため`source_image`/`source_assets`は空のまま）。
+4. `lesson_pages.json`として書き出す（正データ）。
+5. 各`*_renderer.py`が`lesson_pages.json`を読み込み、派生出力（Markdown/DOCX/PDF/JSON）を生成する。`build-all`はこのステップも内部で自動実行する。
 
 ## データモデル
-- Project
-- Page
-- DialogueLine
-- CanvaLayout
+
+### `src/models.py`（入力=pages形式、requirements.json）
+- `DialogueLine`: `speaker` / `text`
+- `CanvaInfo`: `layout_type` / `main_visual` / `notes`
+- `Page`: `page_no` / `source_image` / `title` / `summary` / `lines: list[DialogueLine]` / `improvement_points: list[str]` / `canva: CanvaInfo` / `source_assets: list[str]`（`source_image`以外の関連画像。通常は空配列）
+- `Project`: `project_title` / `target_reader` / `pages: list[Page]`
+- `Requirements`: `theme` / `target_audience` / `goal` / `reader_problem` / `promised_value` / `tone` / `output_style` / `page_count: int | None`（**現状未使用。将来拡張用**） / `must_include: list[str]` / `must_not_include: list[str]`
+
+### `src/import_source.py`（元資料からのpages形式互換JSON生成）
+- 関数群のみでデータクラスは持たない。`import_images`/`import_pdf`/`import_pptx`/`import_source`が、いずれも`models.py`の`Page`と同じスキーマの辞書（`pages`形式互換）を返す。
+
+### `src/lesson_pages.py`（正データ=lesson_pages形式）
+- `LessonMetadata`: `project_title` / `mode` / `source_policy` / `target_audience` / `tone` / `generated_at` / `requirements_source`
+- `LessonPage`: `page_no` / `title` / `body` / `summary` / `image_text` / `layout_instruction` / `canva_prompt` / `video_scene` / `source_image` / `notes` / `source_page_no: list[int]` / `role: str` / `source_assets: list[str]`
+- `LessonDocument`: `metadata: LessonMetadata` / `pages: list[LessonPage]`（`project_title`/`target_reader`は`metadata`への後方互換プロパティとして提供）
+- `SourcePageSummary`: `restructure`が元ページから抽出する中間表現。`source_page_no` / `title` / `summary` / `key_points: list[str]` / `raw_text` / `layout_instruction` / `source_image` / `source_assets: list[str]`
+
+> 過去のドキュメントに記載されていた`CanvaLayout`というクラスは実装に存在しない。Canva関連の構造体は`CanvaInfo`（models.py、入力側）であり、`lesson_pages.json`側では`layout_instruction`/`canva_prompt`という文字列フィールドとして保持する。
 
 ## 出力形式
-初期版はMarkdown固定。将来的にHTML、DOCX、PDFへ拡張する。
+Markdown（`brushup.md`/`canva_design.md`/`review_report.md`）、DOCX、PDF（reportlab、日本語はCIDフォント`HeiseiKakuGo-W5`）、JSON（`lesson_pages.json`/`restructure_plan.json`/`scenario.json`/`scene.json`/`canva_sync_report.json`/`wp_publish_report.json`）、プレーンテキスト（`voicevox.txt`）に対応済み。詳細は[`docs/04_output_spec.md`](04_output_spec.md)を参照。
+
+## 任意機能（Canva/WordPress連携）
+
+`canva_client.py`（Canva Connect API）・`wordpress_client.py`（WordPress REST API）は、いずれも**任意機能・モック付き連携雛形**である。
+
+- `.env`（`env_config.py`が読み込み）に認証情報が無ければ、`requests`を一切呼び出さずモックのID・URLを返す（`is_mock=True`）。
+- 必須機能（`import-source`/`build-all`/`lesson-pages`/`review-report`/`generate`/`canva`/`docx`/`pdf`/`scenario`）は、Canva/WordPressの設定状態に一切依存しない。
+- Canva側は`CANVA_API_KEY`を単純な`Authorization: Bearer`ヘッダーとして送る簡易実装であり、実際のCanva Connect APIが要求するOAuth2/PKCEには未対応。WordPress側もApplication Password方式の実装はあるが、実サイトでの疎通確認は未実施。
+- 本番相当のAPI疎通確認・OAuth2/PKCE対応は今後の課題（[`docs/99_implementation_review_brief.md`](99_implementation_review_brief.md)参照）。

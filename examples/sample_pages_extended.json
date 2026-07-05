@@ -1,0 +1,55 @@
+{
+  "project_title": "教材ブラッシュアップ設計書 v1.1（拡張サンプル）",
+  "target_reader": "教材制作者・Canva作業者",
+  "pages": [
+    {
+      "page_no": 1,
+      "source_image": "page_01.png",
+      "title": "サンプル記事 002",
+      "summary": "教材の導入ページ。記事名と番号を示す。",
+      "lines": [
+        {"speaker": "状況説明者", "text": "サンプル記事 002"}
+      ],
+      "improvement_points": [
+        "表紙として情報量を絞る",
+        "タイトルを大きく配置する"
+      ],
+      "canva": {
+        "layout_type": "縦長SNS教材",
+        "main_visual": "中央にタイトル、下部にページ番号",
+        "notes": "背景は淡色、タイトルは太字で視認性を高める"
+      }
+    },
+    {
+      "page_no": 2,
+      "source_image": "page_02.png",
+      "title": "会話パート（3話者）",
+      "summary": "状況説明者・まじょこ・その他の3話者が登場する会話ページ。",
+      "lines": [
+        {"speaker": "状況説明者", "text": "まじょこは、友達とのやりとりで悩んでいます。"},
+        {"speaker": "まじょこ", "text": "どう伝えたらいいのか、わからないな。"},
+        {"speaker": "その他", "text": "まずは自分の気持ちを整理してみよう。"},
+        {"speaker": "まじょこ", "text": "うん、やってみる。"}
+      ],
+      "improvement_points": [
+        "会話の流れを残す",
+        "学習ポイントを最後に追加する",
+        "台詞を短く区切って読みやすくする"
+      ],
+      "canva": {
+        "layout_type": "会話型教材",
+        "main_visual": "左にまじょこ、右に相手役、中央に吹き出し",
+        "notes": "会話順が分かるように上から下へ配置する"
+      }
+    },
+    {
+      "page_no": 3,
+      "source_image": "page_03.png",
+      "title": "未整理ページ（最小入力の例）",
+      "summary": "",
+      "lines": [],
+      "improvement_points": [],
+      "canva": {}
+    }
+  ]
+}

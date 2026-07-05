@@ -2,8 +2,18 @@
 name = "ai-kyouzai-brushup"
 version = "0.1.0"
 description = "AI教材ブラッシュアップシステム"
+# 推奨は3.11以上。動作確認は3.9.6でも実施済み（pytest全件通過。詳細はREADME「動作要件」参照）。
+# ここでは推奨バージョンをrequires-pythonとして維持している。
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "python-docx>=1.1.0",
+    "reportlab>=4.0.0",
+    "requests>=2.31.0",
+    "Pillow>=10.0.0",
+    "pytesseract>=0.3.10",
+    "pymupdf>=1.24.0",
+    "python-pptx>=1.0.0",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0.0"]

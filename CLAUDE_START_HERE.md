@@ -2,6 +2,8 @@
 
 このファイルは、Claude Codeを起動した直後に最初に読み込ませるための指示書です。
 
+**実行確認について**: 通常のファイル編集・`pytest`実行・`run_sample.sh`実行・ドキュメント更新は、都度「実行してよいですか」と確認せず最後まで進めてください。認証・課金・外部反映などユーザー本人の操作が必要になる場合のみ事前に明示してください。詳細は[`CLAUDE_RULES.md`](CLAUDE_RULES.md)「実行確認の運用ルール（重要）」を参照。
+
 ## 最初にClaude Codeへ貼る指示
 
 ```text
@@ -12,6 +14,8 @@
 - README.md
 - CLAUDE.md
 - CLAUDE_RULES.md
+- docs/README.md（docs配下の各文書の役割一覧。まずここで何を読むべきか確認する）
+- docs/00_redesign_v2.md（現行の3モード[proofread/restructure/generate]・restructure再構成ロジックの正式な設計書。必ず読むこと）
 - docs/01_requirements.md
 - docs/02_architecture.md
 - docs/03_data_format.md
@@ -21,6 +25,13 @@
 - examples/ 配下
 - src/ 配下
 - tests/ 配下
+
+必要に応じて以下も確認してください（任意機能や将来拡張・実利用テスト・レビュー履歴の背景を把握したい場合）。
+
+- docs/07_api_integration_design.md（将来のAPI/LLM連携の設計メモ。現時点では未実装）
+- docs/08_user_acceptance_test.md（Phase 8: 作成者向けの主導線。元資料[画像/PDF/PPTX]を置いて`build-all`を実行する実利用テスト手順・評価観点）
+- docs/99_implementation_review_brief.md（Phase 1〜4のレビュー提出用ブリーフ。既知の制約・変更履歴の記録）
+- docs/99_phase7_review_2026-07-05.md（Phase 7完了時点のレビュー・スナップショット）
 
 確認後、すぐに実装を始めず、以下を報告してください。
 

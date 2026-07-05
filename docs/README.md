@@ -1,0 +1,36 @@
+# docs/ 一覧
+
+このプロジェクトのドキュメント一式です。**初めて見る人は、まず[`00_redesign_v2.md`](00_redesign_v2.md)で3モード(`proofread`/`restructure`/`generate`)の背景を把握したうえで、[`01_requirements.md`](01_requirements.md)→[`02_architecture.md`](02_architecture.md)の順に読むことを推奨します。**
+
+| ファイル | 位置づけ | 補足 |
+|---|---|---|
+| [`00_redesign_v2.md`](00_redesign_v2.md) | v2再設計時点の一次資料（歴史的資料） | 3モード構想・restructure再設計の背景。Phase6以降の`role`/`--plan-output`/`review-report`等は反映されていないため、細部は`01`〜`04`を正とする |
+| [`01_requirements.md`](01_requirements.md) | **現行要件** | 実装済みCLIコマンド、3モードの方針、`lesson_pages.json`正データ方針、`input/`/`output/`除外方針など |
+| [`02_architecture.md`](02_architecture.md) | **現行アーキテクチャ** | 実在する`src/`モジュール構成、実在するデータモデル、処理フロー |
+| [`03_data_format.md`](03_data_format.md) | データ形式（開発者向け） | `pages`形式JSONのスキーマ（`imported_pages.json`もこの形式。作成者は直接作らない） |
+| [`04_output_spec.md`](04_output_spec.md) | **CLI・出力仕様** | 元資料自動取り込み（`import-source`/`build-all`）、`lesson_pages.json`のスキーマ、各派生出力（Markdown/DOCX/PDF/シナリオ等）の生成元、restructureプラン・`review-report`のCLI仕様 |
+| [`05_implementation_tasks.md`](05_implementation_tasks.md) | 実装タスク進捗 | Phase 1〜8の完了状況チェックリスト |
+| [`06_claude_code_workflow.md`](06_claude_code_workflow.md) | Claude Code運用手順 | ZIP展開〜実装〜確認までの一般的な進め方 |
+| [`07_api_integration_design.md`](07_api_integration_design.md) | 将来のAPI連携設計メモ | OCR/ブラッシュアップ/Canva設計のAPI化構想（未実装・設計のみ） |
+| [`08_user_acceptance_test.md`](08_user_acceptance_test.md) | **実利用テスト手順（Phase 8・作成者向けの主導線）** | 元資料（画像/PDF/PPTX）の置き方、`build-all`の実行手順、確認順序、評価観点 |
+| [`feedback_template.md`](feedback_template.md) | フィードバックシート（テンプレート） | 実利用テストの結果を記録するチェックリスト。コピーして使う |
+| [`99_implementation_review_brief.md`](99_implementation_review_brief.md) | 時点レビュー・スナップショット | Phase 1〜4完了時点（2026-07-04）の記録。以降更新しない運用ルールは同ファイル冒頭を参照 |
+| [`99_phase7_review_2026-07-05.md`](99_phase7_review_2026-07-05.md) | 時点レビュー・スナップショット | Phase 7（restructure品質改善・出力のMarkdown混入対策一式）完了時点（2026-07-05）の記録 |
+
+## 迷ったときは
+
+- **「今何ができるか」を知りたい** → `01_requirements.md`、または`README.md`の「必須機能・任意機能」節
+- **「コードのどこに何があるか」を知りたい** → `02_architecture.md`
+- **「入力JSON・出力JSONの形式」を知りたい** → `03_data_format.md`（入力）/ `04_output_spec.md`（`lesson_pages.json`・派生出力）
+- **「このプロジェクトはどこまで終わっているか」を知りたい** → `05_implementation_tasks.md` と `python3 -m pytest -q` の実行結果
+- **元資料（画像/PDF/PPTX）があり、実際の教材素材で試したい** → `08_user_acceptance_test.md`（`build-all`の手順）と`feedback_template.md`（結果の記録）
+- **元資料が無く、要件定義だけから新規に教材を作りたい（新規構築）** → `README.md`「`lesson-pages`の3モード（v2.0）」の`generate`モード（`build-all`は元資料前提のため対象外）
+- **過去のレビュー経緯を知りたい** → `99_implementation_review_brief.md`（ただし現行仕様の正ではない点に注意）
+
+## `05_*` と `99_*` の運用ルール（重要）
+
+- **`05_implementation_tasks.md`**: 実装進捗・Phase管理用。コード・CLI・出力仕様・テストに変更を加えたら、このファイルを更新するか「更新不要」と判断するかを必ず確認する。
+- **`99_*`**: 時点レビュー・スナップショット用。作成時点の記録であり、現行仕様の正ではない。**既存の`99_*`ファイルは上書きしない**。新しいレビューを残す場合は`docs/99_review_2026-08.md`のように日付/バージョン付きの別ファイルとして追加する。
+- **作業完了報告には、`05_implementation_tasks.md`を更新したか／更新不要と判断したか、`99_*`を新規追加したか／追加不要と判断したかを必ず含める。**
+
+詳細は[`CLAUDE_RULES.md`](../CLAUDE_RULES.md)「ドキュメント整合性の運用ルール」を参照。
