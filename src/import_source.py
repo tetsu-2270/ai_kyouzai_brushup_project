@@ -79,16 +79,23 @@ def _page_from_image(index: int, image_path: Path, assets_dir: Path, ocr_status:
     }
 
 
-def import_images(image_paths: list[Path], assets_dir: Path, project_title: str) -> dict[str, Any]:
+def import_images(
+    image_paths: list[Path], assets_dir: Path, project_title: str, quiet: bool = False
+) -> dict[str, Any]:
     """画像ファイル群を、ファイル名順に1画像=1元ページとして取り込む。
 
     OCR環境（tesseract/日本語言語データ）を事前に一度だけ診断する。環境が整っていない場合は、
     黙って全ページ空のまま処理を続けるのではなく、標準エラー出力に警告を表示したうえで処理を継続する
-    （既存の個別CLI・build-all・regenerate・generateモード等の導線を壊さないための方針。
+    （既存の個別CLI・regenerate・generateモード等の導線を壊さないための方針。
     詳細は`docs/04_output_spec.md`「OCR前提の事前チェック」を参照）。
+
+    `quiet=True`の場合、この関数自体は警告を表示しない。`build-all`のOCR必須モード
+    （`proofread`/`restructure`）経由で呼ばれる場合、同じ内容の警告を`build_all()`側で
+    1つに集約して表示するため、ここでの重複表示を避ける（Phase 10.2追加修正）。
+    単体の`import-source`コマンドからは`quiet`を指定せず、従来どおりここで警告を表示する。
     """
     ocr_status = get_ocr_environment_status()
-    if not ocr_status["ocr_ready"]:
+    if not ocr_status["ocr_ready"] and not quiet:
         print(format_precondition_warning(ocr_status), file=sys.stderr)
 
     sorted_paths = sorted(image_paths, key=lambda p: p.name)
@@ -97,7 +104,7 @@ def import_images(image_paths: list[Path], assets_dir: Path, project_title: str)
         for index, path in enumerate(sorted_paths, start=1)
     ]
 
-    if pages and all(not page["lines"] for page in pages):
+    if pages and all(not page["lines"] for page in pages) and not quiet:
         print(format_all_pages_empty_warning(), file=sys.stderr)
 
     return {"project_title": project_title, "target_reader": "教材制作者", "pages": pages}
@@ -189,11 +196,14 @@ def import_pptx(pptx_path: Path, assets_dir: Path) -> dict[str, Any]:
     return {"project_title": pptx_path.stem, "target_reader": "教材制作者", "pages": pages}
 
 
-def import_source(input_path: str | Path, assets_dir: str | Path) -> dict[str, Any]:
+def import_source(input_path: str | Path, assets_dir: str | Path, quiet: bool = False) -> dict[str, Any]:
     """元資料（画像ディレクトリ/画像ファイル/PDF/PPTX）を、pages形式JSON互換の辞書として取り込む。
 
     戻り値はexamples/sample_pages.jsonと同じpages形式であり、そのままlesson-pagesの
     --inputに渡せる。画像アセットはassets_dir配下にコピー・保存する。
+
+    `quiet=True`は画像取り込み時のOCR関連警告（`import_images()`参照）を抑制する。
+    PDF/PPTXの取り込みはOCRを使わないため影響しない。
     """
     path = Path(input_path)
     assets_dir = Path(assets_dir)
@@ -206,11 +216,11 @@ def import_source(input_path: str | Path, assets_dir: str | Path) -> dict[str, A
             raise ValueError(
                 f"{path} 配下に画像ファイル（.png/.jpg/.jpeg/.webp）が見つかりません。"
             )
-        return import_images(image_paths, assets_dir, project_title=path.name)
+        return import_images(image_paths, assets_dir, project_title=path.name, quiet=quiet)
 
     suffix = path.suffix.lower()
     if suffix in _IMAGE_EXTENSIONS:
-        return import_images([path], assets_dir, project_title=path.stem)
+        return import_images([path], assets_dir, project_title=path.stem, quiet=quiet)
     if suffix == ".pdf":
         return import_pdf(path, assets_dir)
     if suffix == ".pptx":

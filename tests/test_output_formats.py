@@ -1062,7 +1062,7 @@ def test_import_source_cli_fails_when_imported_pages_are_empty(tmp_path, monkeyp
     """
     import src.cli as cli_module
 
-    monkeypatch.setattr(cli_module, "import_source", lambda input_path, assets_dir: {"pages": []})
+    monkeypatch.setattr(cli_module, "import_source", lambda input_path, assets_dir, quiet=False: {"pages": []})
 
     dummy_input = tmp_path / "dummy.pptx"
     dummy_input.write_bytes(b"dummy")
@@ -1174,3 +1174,142 @@ def test_canva_cli_succeeds_when_output_generated_normally(tmp_path, monkeypatch
 
     assert output_path.exists()
     assert output_path.stat().st_size > 0
+
+
+# --- Phase 10.2追加修正: OCR必須モードのエラー表示重複整理 ---------------------------
+
+
+def test_build_all_shows_single_consolidated_error_when_tesseract_missing(tmp_path, monkeypatch, capsys):
+    """画像input + proofread + Tesseract未導入で、stderrに同じ意味の警告/エラーが
+    重複表示されない（build-all側の集約エラー1ブロックのみ）ことを確認する。"""
+    import src.cli as cli_module
+    import src.import_source as import_source_module
+
+    not_ready_status = {
+        "tesseract_available": False, "tesseract_path": None, "tesseract_on_path": False,
+        "languages": [], "japanese_available": False, "english_available": False,
+        "brew_available": False, "brew_path": None, "brew_on_path": False,
+        "path_suggestions": [], "warnings": [], "errors": ["Tesseract command was not found."],
+        "ocr_ready": False,
+    }
+    monkeypatch.setattr(import_source_module, "get_ocr_environment_status", lambda: not_ready_status)
+    monkeypatch.setattr(cli_module, "get_ocr_environment_status", lambda: not_ready_status)
+
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir, count=1)
+    output_dir = tmp_path / "output"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "build-all", "--input", str(source_dir), "--mode", "proofread", "--output-dir", str(output_dir)],
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 1
+
+    captured = capsys.readouterr()
+    # build-all側の集約エラーは1回だけ出る。
+    assert captured.err.count("mode=proofread requires OCR text") == 1
+    # import_source()側の重複メッセージ（"OCR requires Tesseract"という個別の見出し）は出ない。
+    assert "OCR requires Tesseract, but the 'tesseract' command was not found" not in captured.err
+    # import_source()側の全ページ空警告も重複して出ない。
+    assert "OCR produced no text for any page" not in captured.err
+
+
+def test_build_all_allow_empty_ocr_shows_single_warning_not_import_source_warning(tmp_path, monkeypatch, capsys):
+    """--allow-empty-ocr指定時も、import_source()側の個別警告ではなく、build-all側の
+    集約された1つの警告だけが表示されることを確認する。"""
+    import src.cli as cli_module
+    import src.import_source as import_source_module
+
+    not_ready_status = {
+        "tesseract_available": False, "tesseract_path": None, "tesseract_on_path": False,
+        "languages": [], "japanese_available": False, "english_available": False,
+        "brew_available": False, "brew_path": None, "brew_on_path": False,
+        "path_suggestions": [], "warnings": [], "errors": ["Tesseract command was not found."],
+        "ocr_ready": False,
+    }
+    monkeypatch.setattr(import_source_module, "get_ocr_environment_status", lambda: not_ready_status)
+    monkeypatch.setattr(cli_module, "get_ocr_environment_status", lambda: not_ready_status)
+
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir, count=1)
+    output_dir = tmp_path / "output"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "build-all", "--input", str(source_dir), "--mode", "proofread",
+            "--output-dir", str(output_dir), "--allow-empty-ocr",
+        ],
+    )
+    main()
+
+    captured = capsys.readouterr()
+    assert captured.err.count("OCR environment is degraded") == 1
+    assert "OCR requires Tesseract, but the 'tesseract' command was not found" not in captured.err
+    assert "OCR produced no text for any page" not in captured.err
+    assert (output_dir / "editable" / "lesson_pages.json").exists()
+
+
+def test_import_source_standalone_still_shows_warnings_when_tesseract_missing(tmp_path, monkeypatch, capsys):
+    """単体のimport-sourceコマンドでは、従来どおりOCR関連の警告が表示されることを確認する
+    （build-all向けの重複抑制がimport-source単体には影響しないことの回帰確認）。"""
+    import src.import_source as import_source_module
+
+    not_ready_status = {
+        "tesseract_available": False, "tesseract_path": None, "tesseract_on_path": False,
+        "languages": [], "japanese_available": False, "english_available": False,
+        "brew_available": False, "brew_path": None, "brew_on_path": False,
+        "path_suggestions": [], "warnings": [], "errors": ["Tesseract command was not found."],
+        "ocr_ready": False,
+    }
+    monkeypatch.setattr(import_source_module, "get_ocr_environment_status", lambda: not_ready_status)
+    monkeypatch.setattr(import_source_module, "_try_ocr", lambda image_path, ocr_status: "")
+
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir, count=1)
+    output_path = tmp_path / "imported_pages.json"
+    monkeypatch.setattr(
+        "sys.argv", ["cli", "import-source", "--input", str(source_dir), "--output", str(output_path)]
+    )
+    main()
+
+    captured = capsys.readouterr()
+    assert "OCR requires Tesseract, but the 'tesseract' command was not found" in captured.err
+    assert "OCR produced no text for any page" in captured.err
+
+
+def test_build_all_failure_log_still_contains_ocr_details_despite_quiet_stderr(tmp_path, monkeypatch):
+    """stderr表示は集約されていても、logs/には原因・警告・exit_codeが記録されることを確認する。"""
+    import os
+
+    import src.cli as cli_module
+    import src.import_source as import_source_module
+
+    not_ready_status = {
+        "tesseract_available": False, "tesseract_path": None, "tesseract_on_path": False,
+        "languages": [], "japanese_available": False, "english_available": False,
+        "brew_available": False, "brew_path": None, "brew_on_path": False,
+        "path_suggestions": [], "warnings": [], "errors": ["Tesseract command was not found."],
+        "ocr_ready": False,
+    }
+    monkeypatch.setattr(import_source_module, "get_ocr_environment_status", lambda: not_ready_status)
+    monkeypatch.setattr(cli_module, "get_ocr_environment_status", lambda: not_ready_status)
+
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir, count=1)
+    output_dir = tmp_path / "output"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "build-all", "--input", str(source_dir), "--mode", "proofread", "--output-dir", str(output_dir)],
+    )
+    with pytest.raises(SystemExit):
+        main()
+
+    from pathlib import Path
+
+    log_files = list(Path(os.environ["AI_KYOUZAI_LOGS_DIR"]).glob("*_build-all.log"))
+    assert len(log_files) == 1
+    text = log_files[0].read_text(encoding="utf-8")
+    assert "tesseract_available: False" in text
+    assert "mode=proofread requires OCR text" in text
+    assert "exit_code: 1" in text

@@ -45,15 +45,20 @@ def write_text(path: str | Path, text: str) -> None:
 
 
 def run_import_source(
-    input_path: str, output_path: str | Path, assets_dir: str | Path | None = None
+    input_path: str, output_path: str | Path, assets_dir: str | Path | None = None, quiet: bool = False
 ) -> dict[str, object]:
     """元資料(画像/PDF/PPTX)からimported_pages.json互換のJSONを生成して書き出す。
 
     戻り値の辞書（pages形式互換）は、build_all()がOCR前提チェックに使う。
+
+    `quiet=True`は画像取り込み時のOCR関連警告を抑制する（`build_all()`がOCR必須モードで
+    自前の集約済みエラー/警告を表示する場合に、`import_source()`側の重複表示を避けるため。
+    Phase 10.2追加修正）。単体の`import-source`コマンドからは指定しない（既定False、
+    従来どおりここで警告を表示する）。
     """
     output_path = Path(output_path)
     resolved_assets_dir = Path(assets_dir) if assets_dir else output_path.parent / "assets"
-    imported = import_source(input_path, resolved_assets_dir)
+    imported = import_source(input_path, resolved_assets_dir, quiet=quiet)
     write_text(output_path, json.dumps(imported, ensure_ascii=False, indent=2) + "\n")
     return imported
 
@@ -211,8 +216,19 @@ def _validate_ocr_precondition(
         })
 
     if allow_empty_ocr:
-        if logger:
-            logger.warn("--allow-empty-ocrが指定されているため、OCR前提チェックをスキップしました。")
+        degraded = not ocr_status["tesseract_available"] or not ocr_status["japanese_available"] or all(
+            not page.get("lines") for page in pages
+        )
+        if degraded:
+            message = (
+                "WARNING: OCR environment is degraded, but continuing because --allow-empty-ocr was specified.\n"
+                "警告: OCR環境が整っていませんが、--allow-empty-ocrが指定されているため処理を継続します。"
+            )
+            print(message, file=sys.stderr)
+            if logger:
+                logger.warn(message)
+        elif logger:
+            logger.warn("--allow-empty-ocrが指定されています（OCR環境は利用可能でした）。")
         return
 
     if not ocr_status["tesseract_available"]:
@@ -292,7 +308,9 @@ def build_all(
             "output_dir": str(output_dir),
         })
 
-    imported = run_import_source(input_path, imported_pages_path, assets_dir)
+    # 画像inputの場合、OCR関連の警告は_validate_ocr_precondition()側で集約して表示するため、
+    # import_source()側の重複表示をquiet=Trueで抑制する（Phase 10.2追加修正）。
+    imported = run_import_source(input_path, imported_pages_path, assets_dir, quiet=(input_kind == "image"))
     pages = imported.get("pages", [])
 
     if logger:
