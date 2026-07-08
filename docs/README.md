@@ -16,6 +16,7 @@
 | [`09_editable_regenerate_guide.md`](09_editable_regenerate_guide.md) | **editable編集・再生成ガイド（Phase 10）** | `output/editable/lesson_pages.json`の編集してよい項目・編集しない方がよい項目、`regenerate`の具体例、日本語フォント（`--font-path`）の指定方法・トラブルシューティング |
 | [`11_llm_handoff_workflow.md`](11_llm_handoff_workflow.md) | **LLM手作業投入ワークフロー** | `llm-handoff`コマンドの使い方、ChatGPT/Claude等への貼り付け手順、生成されるMarkdownの内容、LLM出力を`editable/lesson_pages.json`へ反映する運用（自動取り込みは行わない） |
 | [`12_llm_review_apply_workflow.md`](12_llm_review_apply_workflow.md) | **LLM回答の採用判断・反映ワークフロー** | `edit-plan-template`コマンドの使い方、LLM回答をそのまま反映せず採用判断シートに整理する理由、`lesson_pages.json`の編集対象、`regenerate`実行例、再生成後チェックリスト |
+| [`13_ocr_quality_check_workflow.md`](13_ocr_quality_check_workflow.md) | **OCR品質チェック・補正候補データ生成ワークフロー** | `ocr-check`コマンドの使い方、なぜLLM投入前にOCR確認が必要か、`ocr_check_report.md`/`ocr_correction_candidates.json`の読み方、重要度の見方、よくあるOCR誤認識例、システムと人間の役割分担 |
 | [`feedback_template.md`](feedback_template.md) | フィードバックシート（テンプレート） | 実利用テストの結果を記録するチェックリスト。コピーして使う |
 | [`99_implementation_review_brief.md`](99_implementation_review_brief.md) | 時点レビュー・スナップショット | Phase 1〜4完了時点（2026-07-04）の記録。以降更新しない運用ルールは同ファイル冒頭を参照 |
 | [`99_phase7_review_2026-07-05.md`](99_phase7_review_2026-07-05.md) | 時点レビュー・スナップショット | Phase 7（restructure品質改善・出力のMarkdown混入対策一式）完了時点（2026-07-05）の記録 |
@@ -34,6 +35,7 @@
 - **なぜエラーになったか・実行内容を後から確認したい** → `logs/YYYYMMDD_HHMMSS_<command>.log`（`04_output_spec.md`「実行ログ（logs/）の標準仕様」、`08_user_acceptance_test.md`「実行ログと成功判定の考え方」参照）
 - **教材の構成チェック・文章のブラッシュアップ案をChatGPT/Claude等にもらいたい** → `11_llm_handoff_workflow.md`（`llm-handoff`コマンド。LLM出力の自動取り込みは行わない）
 - **LLMの改善案をどう`editable/lesson_pages.json`に反映すればよいか迷う** → `12_llm_review_apply_workflow.md`（`edit-plan-template`コマンドで採用判断シートを作ってから手編集する）
+- **`llm-handoff`のLLM回答がOCR誤字の指摘ばかりになる** → `13_ocr_quality_check_workflow.md`（`ocr-check`コマンドでLLM投入前にOCR崩れ候補・修正候補を先に確認する）
 - **過去のレビュー経緯を知りたい** → `99_implementation_review_brief.md`（ただし現行仕様の正ではない点に注意）
 
 ## `05_*` と `99_*` の運用ルール（重要）

@@ -251,6 +251,15 @@ def _format_pages_section(
 def _format_notes_section() -> str:
     return (
         "## 7. 注意事項\n\n"
+        "- 元資料のOCR結果に崩れが多い場合は、このファイルをLLMへ貼り付ける前に`ocr-check`で"
+        "OCR崩れ候補・修正候補を確認してください（先にOCR補正を行わないと、LLMの回答が誤字修正の"
+        "指摘中心になりやすいため）。\n\n"
+        "  ```bash\n"
+        "  python3 -m src.cli ocr-check --input output/editable/lesson_pages.json "
+        "--output output/ocr_check_report.md "
+        "--candidates-output output/ocr_correction_candidates.json\n"
+        "  ```\n\n"
+        "  詳細は`docs/13_ocr_quality_check_workflow.md`を参照してください。\n"
         "- このファイルはLLMへの出力を自動で取り込みません。LLMの回答をそのまま"
         "`output/editable/lesson_pages.json`へ反映せず、まず`edit_plan_template.md`に採用判断を"
         "整理してください。\n\n"

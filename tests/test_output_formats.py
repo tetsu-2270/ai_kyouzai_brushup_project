@@ -1632,3 +1632,112 @@ def test_llm_handoff_md_includes_guidance_to_use_edit_plan_template(tmp_path, mo
     text = output_path.read_text(encoding="utf-8")
     assert "edit-plan-template" in text
     assert "edit_plan_template.md" in text
+
+
+# --- OCR品質チェック＋補正候補データ生成（ocr-check） ------------------------------------
+
+
+def test_ocr_check_cli_generates_report_and_candidates_json(tmp_path, monkeypatch):
+    """build-all/lesson-pagesで作ったeditable/lesson_pages.jsonから、ocr-checkコマンドで
+    Markdownレポートと補正候補JSONの両方が生成されることを確認する（CLIからの実行確認）。"""
+    editable_path = tmp_path / "output" / "editable" / "lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages", "--mode", "generate",
+            "--requirements", "examples/requirements_ai_instagram.json",
+            "--output", str(editable_path),
+        ],
+    )
+    main()
+
+    report_path = tmp_path / "output" / "ocr_check_report.md"
+    candidates_path = tmp_path / "output" / "ocr_correction_candidates.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "ocr-check", "--input", str(editable_path),
+            "--output", str(report_path), "--candidates-output", str(candidates_path),
+        ],
+    )
+    main()
+
+    assert report_path.exists()
+    assert report_path.stat().st_size > 0
+    assert candidates_path.exists()
+    assert candidates_path.stat().st_size > 0
+
+    import json
+    data = json.loads(candidates_path.read_text(encoding="utf-8"))
+    assert "candidates" in data
+    assert "summary" in data
+
+
+def test_ocr_check_cli_custom_candidates_output_path(tmp_path, monkeypatch):
+    """--candidates-outputで補正候補JSONの出力先を変更できることを確認する。"""
+    editable_path = tmp_path / "editable_lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages", "--mode", "generate",
+            "--requirements", "examples/requirements_ai_instagram.json",
+            "--output", str(editable_path),
+        ],
+    )
+    main()
+
+    custom_candidates_path = tmp_path / "custom_candidates.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "ocr-check", "--input", str(editable_path),
+            "--candidates-output", str(custom_candidates_path),
+        ],
+    )
+    main()
+
+    assert custom_candidates_path.exists()
+
+
+def test_ocr_check_cli_default_output_paths(tmp_path, monkeypatch):
+    """--output/--candidates-outputを省略した場合、既定パスに生成されることを確認する。"""
+    editable_path = tmp_path / "editable_lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages", "--mode", "generate",
+            "--requirements", "examples/requirements_ai_instagram.json",
+            "--output", str(editable_path),
+        ],
+    )
+    main()
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["cli", "ocr-check", "--input", str(editable_path)])
+    main()
+
+    assert (tmp_path / "output" / "ocr_check_report.md").exists()
+    assert (tmp_path / "output" / "ocr_correction_candidates.json").exists()
+
+
+def test_llm_handoff_md_includes_ocr_check_guidance(tmp_path, monkeypatch):
+    """llm_handoff.mdの注意事項に、LLM投入前にocr-checkを確認する案内が含まれることを確認する。"""
+    editable_path = tmp_path / "output" / "editable" / "lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages", "--mode", "generate",
+            "--requirements", "examples/requirements_ai_instagram.json",
+            "--output", str(editable_path),
+        ],
+    )
+    main()
+
+    output_path = tmp_path / "output" / "llm_handoff.md"
+    monkeypatch.setattr(
+        "sys.argv", ["cli", "llm-handoff", "--input", str(editable_path), "--output", str(output_path)]
+    )
+    main()
+
+    text = output_path.read_text(encoding="utf-8")
+    assert "ocr-check" in text

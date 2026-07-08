@@ -181,6 +181,19 @@ def _format_checklist_section() -> str:
     )
 
 
+def _format_ocr_check_section() -> str:
+    return (
+        "## 9. OCR確認チェック\n\n"
+        "文章改善とOCR崩れの修正を混同しないよう、以下も確認してください"
+        "（詳細は`docs/13_ocr_quality_check_workflow.md`参照）。\n\n"
+        "- [ ] `ocr-check`でOCR崩れ候補・修正候補を確認した\n"
+        "- [ ] 高重要度のOCR候補を確認した\n"
+        "- [ ] `ocr_correction_candidates.json`を確認した\n"
+        "- [ ] 元画像確認が必要な箇所を確認した\n"
+        "- [ ] OCR補正と文章改善を混同していない"
+    )
+
+
 def render_edit_plan_template_markdown(document: LessonDocument) -> str:
     """editable/lesson_pages.json相当の正データから、LLM改善案の採用判断シート
     （edit_plan_template.md）を生成する。
@@ -204,5 +217,6 @@ def render_edit_plan_template_markdown(document: LessonDocument) -> str:
         _format_regenerate_flow_section(),
         _format_pages_section(document),
         _format_checklist_section(),
+        _format_ocr_check_section(),
     ]
     return "\n\n".join(sections) + "\n"

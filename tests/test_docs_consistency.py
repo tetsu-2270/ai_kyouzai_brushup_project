@@ -501,3 +501,31 @@ def test_docs_12_includes_regenerate_checklist():
     text = _read(REPO_ROOT / "docs" / "12_llm_review_apply_workflow.md")
     assert "チェックリスト" in text
     assert "regenerate" in text
+
+
+# --- ocr-check: OCR品質チェック・補正候補データ生成ワークフロー ---------------------------
+
+
+def test_ocr_quality_check_doc_exists_and_is_indexed():
+    """docs/13_ocr_quality_check_workflow.mdが存在し、docs/README.mdから参照されていることを確認する。"""
+    guide_path = REPO_ROOT / "docs" / "13_ocr_quality_check_workflow.md"
+    assert guide_path.exists()
+    docs_readme_text = _read(REPO_ROOT / "docs" / "README.md")
+    assert "13_ocr_quality_check_workflow.md" in docs_readme_text
+
+
+def test_readme_documents_ocr_check_command():
+    text = _read(REPO_ROOT / "README.md")
+    assert "ocr-check" in text
+
+
+def test_docs_13_explains_no_auto_correction():
+    text = _read(REPO_ROOT / "docs" / "13_ocr_quality_check_workflow.md")
+    assert "自動修正" in text
+    assert "自動反映" in text
+
+
+def test_docs_13_lists_common_ocr_misread_examples():
+    text = _read(REPO_ROOT / "docs" / "13_ocr_quality_check_workflow.md")
+    assert "一買" in text
+    assert "一貫" in text

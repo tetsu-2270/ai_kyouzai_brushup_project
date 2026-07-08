@@ -14,6 +14,11 @@ from .import_source import import_source
 from .lesson_pages import LessonDocument, build_lesson_pages, render_review_report, write_lesson_pages_json
 from .edit_plan import render_edit_plan_template_markdown
 from .llm_handoff import render_llm_handoff_markdown
+from .ocr_check import (
+    build_ocr_correction_candidates,
+    render_ocr_check_report_markdown,
+    write_correction_candidates_json,
+)
 from .ocr_environment import (
     OCR_REQUIRED_MODES,
     format_environment_report,
@@ -590,6 +595,21 @@ def main() -> None:
         help="出力Markdown（既定: output/edit_plan_template.md）",
     )
 
+    ocr_check_parser = subparsers.add_parser(
+        "ocr-check",
+        help="lesson_pages.jsonのOCR品質（誤認識・文字化け・不自然な表記）を検出し、"
+        "レポートと補正候補JSONを生成（自動修正・自動反映は行わない）",
+    )
+    ocr_check_parser.add_argument("--input", required=True, help="入力lesson_pages.json（editable配下等）")
+    ocr_check_parser.add_argument(
+        "--output", default="output/ocr_check_report.md", help="出力Markdownレポート（既定: output/ocr_check_report.md）"
+    )
+    ocr_check_parser.add_argument(
+        "--candidates-output",
+        default="output/ocr_correction_candidates.json",
+        help="補正候補JSONの出力先（既定: output/ocr_correction_candidates.json）",
+    )
+
     docx_parser = subparsers.add_parser("docx", help="Word教材(docx)を生成")
     docx_parser.add_argument("--input", required=True, help="入力JSON")
     docx_parser.add_argument("--output", required=True, help="出力docx")
@@ -706,6 +726,20 @@ def main() -> None:
             write_text(args.output, render_edit_plan_template_markdown(document))
             validate_generated_file(args.output, "edit-plan-template")
             logger.add_section("INPUT", {"input_path": args.input})
+            logger.record_generated_file(args.output)
+        elif args.command == "ocr-check":
+            document = load_lesson_document(args.input)
+            candidates_data = build_ocr_correction_candidates(document, source_file=args.input)
+            write_correction_candidates_json(candidates_data, args.candidates_output)
+            validate_generated_file(args.candidates_output, "ocr-check(candidates)")
+            write_text(
+                args.output,
+                render_ocr_check_report_markdown(document, candidates_data, candidates_output=args.candidates_output),
+            )
+            validate_generated_file(args.output, "ocr-check")
+            logger.add_section("INPUT", {"input_path": args.input})
+            logger.add_section("OCR_CHECK", candidates_data["summary"])
+            logger.record_generated_file(args.candidates_output)
             logger.record_generated_file(args.output)
         elif args.command == "docx":
             document = load_lesson_document(args.input)

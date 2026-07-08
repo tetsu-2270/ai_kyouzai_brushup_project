@@ -122,3 +122,10 @@ def test_restructure_mode_mentions_role_reordering_caveat():
     text = render_edit_plan_template_markdown(document)
     assert "restructureの場合の注意" in text
     assert "role" in text
+
+
+def test_render_edit_plan_template_includes_ocr_check_checklist():
+    document = _document("proofread")
+    text = render_edit_plan_template_markdown(document)
+    assert "ocr-check" in text
+    assert "ocr_correction_candidates.json" in text
