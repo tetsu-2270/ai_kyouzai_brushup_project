@@ -7,8 +7,34 @@ from .lesson_pages import LessonDocument, LessonPage
 # 想定しており、この機能自体はAPI連携もローカルLLM本体も持たない、純粋なファイル生成にとどまる。
 # 詳細は docs/11_llm_handoff_workflow.md、プロジェクト方針はREADME.md
 # 「プロジェクト方針：外部API非依存・ローカルLLM移行前提」参照。
+#
+# このモジュールは特定の教材・特定の年代/属性・特定ジャンルに依存しない汎用設計とする。
+# 「50〜60代の受講者」のような固定文言はコードに埋め込まない。対象読者はlesson_pages.jsonの
+# target_audienceから可変的に扱い、未指定の場合は特定の属性を勝手に補完しない
+# （詳細はdocs/11_llm_handoff_workflow.md「target_audienceの扱い」参照）。
 
 _CONSTITUTION = "ブラッシュアップであって、作り直しではない"
+
+# LessonMetadata/Projectの既定値（未指定時のシステム内部プレースホルダ）。この値のままの場合は
+# 「実質未指定」として扱う（src/lesson_pages.py LessonMetadata.target_audience、
+# src/models.py Project.target_readerの既定値と対応）。
+_UNSPECIFIED_TARGET_AUDIENCE_PLACEHOLDER = "教材制作者"
+
+
+def _is_target_audience_specified(target_audience: str) -> bool:
+    value = (target_audience or "").strip()
+    return bool(value) and value != _UNSPECIFIED_TARGET_AUDIENCE_PLACEHOLDER
+
+
+def _format_target_audience_rule(target_audience: str) -> str:
+    """対象読者に関する作業ルールの1行を、target_audienceの有無に応じて可変的に生成する。
+
+    target_audienceが指定されている場合のみ、その値をそのまま使って「対象読者に合わせる」と
+    伝える。未指定の場合は、特定の年代・属性を勝手に補完せず、汎用的な表現にとどめる。
+    """
+    if _is_target_audience_specified(target_audience):
+        return f"- 対象読者「{target_audience}」に合わせて分かりやすく調整する"
+    return "- 想定読者が明示されていないため、元資料の文脈から過度に決め打ちせず、一般的に分かりやすい表現に整える"
 
 
 def _format_purpose_section() -> str:
@@ -22,38 +48,107 @@ def _format_purpose_section() -> str:
     )
 
 
-def _format_request_section() -> str:
+def _format_request_section(mode: str) -> str:
+    if mode == "generate":
+        items = [
+            "教材の目的・対象読者・トーンに沿っているか確認する",
+            "説明が分かりにくい箇所や、読者にとって不足している説明を指摘する",
+            "内容の重複を指摘する",
+            "誇張表現や根拠のない断定を指摘する",
+            "ページごとに改善案・追加案を出す",
+        ]
+    elif mode == "restructure":
+        items = [
+            "元教材の構成を確認する",
+            "説明が分かりにくい箇所や、読者にとって不足している説明を指摘する",
+            "内容の重複を指摘する",
+            "誇張表現や不自然な表現を指摘する",
+            "ページ構成（統合・分割・順序）に改善の余地がないか指摘する",
+            "ページごとに改善案を出す",
+        ]
+    else:
+        # proofreadおよびmode不明の場合。proofreadに合わせた最も慎重な依頼内容にする。
+        items = [
+            "元教材の構成を確認する",
+            "説明が分かりにくい箇所や、読者にとって不足している説明を指摘する",
+            "内容の重複を指摘する",
+            "誇張表現や不自然な表現を指摘する",
+            "ページごとに改善案を出す",
+        ]
+    bullet_list = "\n".join(f"- {item}" for item in items)
     return (
         "## 2. 依頼内容\n\n"
         "以下の観点で、この教材の内容を確認し、指摘・改善案をください。\n\n"
-        "- 元教材の構成を確認する\n"
-        "- 説明が分かりにくい箇所を指摘する\n"
-        "- 内容の重複を指摘する\n"
-        "- 初心者に不足している説明を指摘する\n"
-        "- 誇張表現や不自然な表現を指摘する\n"
-        "- ページごとに改善案を出す\n\n"
+        f"{bullet_list}\n\n"
         "最終的には、人間が`editable/lesson_pages.json`を編集しやすい形で改善案を出してください。"
     )
 
 
-def _format_rules_section() -> str:
+def _format_rules_section(mode: str, target_audience: str) -> str:
+    audience_rule = _format_target_audience_rule(target_audience)
+
+    if mode == "proofread":
+        return (
+            "## 3. 作業ルール（必ず守ってください）\n\n"
+            f"**憲法第1条：「{_CONSTITUTION}」**\n\n"
+            "- 元教材の構成・雰囲気を尊重する\n"
+            "- 誤字脱字、表現の分かりにくさ、説明不足、読みにくさを中心に改善案を出す\n"
+            "- 大きな構成変更（ページの追加・削除・大幅な入れ替え）は提案しない\n"
+            "- 元資料にない断定を追加しない\n"
+            "- 誇張表現を避ける\n"
+            f"{audience_rule}\n"
+            "- 最終編集は人間が行う前提で、あくまで改善案として出す（本文を勝手に確定させない）"
+        )
+    if mode == "restructure":
+        return (
+            "## 3. 作業ルール（必ず守ってください）\n\n"
+            f"**憲法第1条：「{_CONSTITUTION}」（ただし、ページの統合・分割・順序整理などの構成整理は許容する）**\n\n"
+            "- 元教材の意図・雰囲気を尊重する\n"
+            "- ページの統合・分割・順序整理・見出し整理などの構成改善は提案してよい\n"
+            "- 元資料から大きく逸脱した新規内容の追加は避ける\n"
+            "- 元資料にない断定を追加しない\n"
+            "- 誇張表現を避ける\n"
+            f"{audience_rule}\n"
+            "- 最終編集は人間が行う前提で、あくまで改善案として出す（本文を勝手に確定させない）"
+        )
+    if mode == "generate":
+        return (
+            "## 3. 作業ルール（必ず守ってください）\n\n"
+            "このモードは新規教材生成寄りのため、"
+            f"「{_CONSTITUTION}」を最重要ルールとしては固定しません。代わりに以下を重視してください。\n\n"
+            "- 目的・対象読者・トーンを守る\n"
+            "- 必要な説明補足、章立て、ページ構成案の追加は許容する\n"
+            "- 元情報にない断定や根拠のない内容の追加は避ける\n"
+            "- 誇張表現を避ける\n"
+            f"{audience_rule}\n"
+            "- 最終編集は人間が行う前提で、あくまで改善案として出す（本文を勝手に確定させない）"
+        )
+    # mode不明: 汎用レビューとして扱う。generateのような新規追加も、proofreadのような
+    # 強い固定ルールも避け、弱めの表現にとどめる。
     return (
         "## 3. 作業ルール（必ず守ってください）\n\n"
-        f"**憲法第1条：「{_CONSTITUTION}」**\n\n"
-        "- 元教材の構成・雰囲気を尊重する\n"
-        "- 勝手に内容を増やしすぎない\n"
+        "modeが不明なため、汎用的なレビューとして扱ってください。\n\n"
+        "- 元資料の意図・雰囲気を尊重し、過度な作り替えは避ける\n"
         "- 元資料にない断定を追加しない\n"
         "- 誇張表現を避ける\n"
-        "- 初心者に分かりやすくする\n"
-        "- 50〜60代の受講者にも伝わる表現を意識する\n"
-        "- Canva/Gamma等に移しやすい簡潔な構成にする\n"
+        f"{audience_rule}\n"
         "- 最終編集は人間が行う前提で、あくまで改善案として出す（本文を勝手に確定させない）"
     )
 
 
-def _format_response_format_section() -> str:
+def _format_response_format_section(mode: str) -> str:
+    if mode == "proofread":
+        preamble = "proofreadモードのため、大きな構成変更（ページの追加・削除・入れ替え）は提案せず、文章レベルの改善案を中心にしてください。\n\n"
+    elif mode == "restructure":
+        preamble = "restructureモードのため、文章レベルの改善に加えて、ページ構成の整理案（統合・分割・順序変更）も歓迎します。\n\n"
+    elif mode == "generate":
+        preamble = "generateモードのため、目的・対象読者・トーンに沿っていれば、説明の追加やページ構成案の提案も歓迎します。\n\n"
+    else:
+        preamble = ""
+
     return (
         "## 4. 出力してほしい形式\n\n"
+        f"{preamble}"
         "以下のMarkdown形式で回答してください（見出し・箇条書きの構造をそのまま使ってください）。\n\n"
         "```markdown\n"
         "# 教材全体の構成チェック\n\n"
@@ -84,10 +179,13 @@ def _format_overview_section(document: LessonDocument) -> str:
         "## 5. 全体情報",
         "",
         f"- project_title: {metadata.project_title}",
-        f"- target_audience: {metadata.target_audience}",
-        f"- mode: {metadata.mode}",
-        f"- ページ数: {len(document.pages)}",
     ]
+    if _is_target_audience_specified(metadata.target_audience):
+        lines.append(f"- target_audience: {metadata.target_audience}")
+    else:
+        lines.append("- target_audience: (未指定)")
+    lines.append(f"- mode: {metadata.mode}")
+    lines.append(f"- ページ数: {len(document.pages)}")
     if metadata.generated_at:
         lines.append(f"- generated_at: {metadata.generated_at}")
     return "\n".join(lines)
@@ -185,16 +283,23 @@ def render_llm_handoff_markdown(
     文章改善案を得るための中間ファイル。ここでの「LLM」は、まずChatGPT/Claude等の製品を
     手作業で使う運用を指す（外部API呼び出し・ローカルLLM本体はいずれも持たない）。
 
+    依頼文・作業ルール・回答形式の説明は、`document.metadata.mode`（proofread/restructure/
+    generate。それ以外は汎用レビュー扱い）に応じて切り替える。対象読者は
+    `document.metadata.target_audience`が実質的に指定されている場合のみその値を使い、
+    未指定の場合は特定の年代・属性を勝手に補完しない（詳細はモジュール冒頭のコメント参照）。
+
     `page_start`/`page_end`（`page_no`基準、両端含む）を指定すると、対象ページを絞り込める。
     将来的な自動分割・テンプレート分離に備え、セクションごとに関数を分けている。
     """
     title = document.metadata.project_title or "教材ブラッシュアップ設計書"
+    mode = document.metadata.mode
+    target_audience = document.metadata.target_audience
     sections = [
         f"# {title}：LLM手作業投入用ファイル",
         _format_purpose_section(),
-        _format_request_section(),
-        _format_rules_section(),
-        _format_response_format_section(),
+        _format_request_section(mode),
+        _format_rules_section(mode, target_audience),
+        _format_response_format_section(mode),
         _format_overview_section(document),
         _format_pages_section(document, page_start, page_end),
         _format_notes_section(),

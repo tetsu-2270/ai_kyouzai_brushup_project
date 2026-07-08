@@ -441,3 +441,35 @@ def test_docs_llm_handoff_includes_constitution_phrase():
 def test_readme_documents_llm_handoff_command():
     text = _read(REPO_ROOT / "README.md")
     assert "llm-handoff" in text
+
+
+def test_docs_llm_handoff_explains_mode_aware_behavior():
+    """docs/11がmodeごとの依頼文・作業ルールの切り替えを説明していることを確認する。"""
+    text = _read(REPO_ROOT / "docs" / "11_llm_handoff_workflow.md")
+    assert "proofread" in text
+    assert "restructure" in text
+    assert "generate" in text
+    assert "mode" in text.lower()
+
+
+def test_docs_llm_handoff_explains_target_audience_is_variable():
+    """target_audienceが可変情報であり、未指定時に年代・属性を補完しない旨がdocs/11に
+    明記されていることを確認する。"""
+    text = _read(REPO_ROOT / "docs" / "11_llm_handoff_workflow.md")
+    assert "target_audience" in text
+    assert "勝手に補完しません" in text or "決め打ちせず" in text
+
+
+def test_docs_llm_handoff_age_group_mention_is_labeled_as_example():
+    """docs/11で年代（50〜60代等）に言及する場合は、あくまで例示であることが明記されている
+    ことを確認する（一般仕様として固定していないことの確認）。"""
+    text = _read(REPO_ROOT / "docs" / "11_llm_handoff_workflow.md")
+    if "50〜60代" in text or "60代" in text:
+        assert "例" in text
+
+
+def test_readme_llm_handoff_section_does_not_hardcode_age_group():
+    text = _read(REPO_ROOT / "README.md")
+    llm_handoff_section = text.split("### LLM手作業投入用ファイルを生成")[1].split("###")[0]
+    assert "50〜60代" not in llm_handoff_section
+    assert "60代" not in llm_handoff_section
