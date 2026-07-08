@@ -564,3 +564,29 @@ def test_docs_14_explains_approved_status_only():
 def test_docs_14_explains_no_input_overwrite():
     text = _read(REPO_ROOT / "docs" / "14_apply_ocr_corrections_workflow.md")
     assert "上書き" in text
+
+
+# --- apply-llm-suggestions: LLM改善案の構造化候補生成ワークフロー -------------------------
+
+
+def test_llm_suggestion_candidates_doc_exists_and_is_indexed():
+    guide_path = REPO_ROOT / "docs" / "15_llm_suggestion_candidates_workflow.md"
+    assert guide_path.exists()
+    docs_readme_text = _read(REPO_ROOT / "docs" / "README.md")
+    assert "15_llm_suggestion_candidates_workflow.md" in docs_readme_text
+
+
+def test_readme_documents_apply_llm_suggestions_command():
+    text = _read(REPO_ROOT / "README.md")
+    assert "apply-llm-suggestions" in text
+
+
+def test_docs_15_explains_no_auto_reflection():
+    text = _read(REPO_ROOT / "docs" / "15_llm_suggestion_candidates_workflow.md")
+    assert "自動反映" in text
+    assert "proposed" in text
+
+
+def test_docs_15_explains_ocr_fixed_input_recommendation():
+    text = _read(REPO_ROOT / "docs" / "15_llm_suggestion_candidates_workflow.md")
+    assert "ocr_fixed" in text

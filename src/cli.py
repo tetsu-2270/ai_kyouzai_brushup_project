@@ -14,6 +14,13 @@ from .import_source import import_source
 from .lesson_pages import LessonDocument, build_lesson_pages, render_review_report, write_lesson_pages_json
 from .edit_plan import render_edit_plan_template_markdown
 from .llm_handoff import render_llm_handoff_markdown
+from .llm_suggestions import (
+    build_llm_suggestion_candidates,
+    load_llm_suggestions_markdown,
+    parse_llm_suggestions,
+    render_llm_suggestion_report_markdown,
+    write_llm_suggestion_candidates_json,
+)
 from .ocr_apply import (
     apply_ocr_corrections,
     load_correction_candidates,
@@ -639,6 +646,28 @@ def main() -> None:
         "--dry-run", action="store_true", help="出力JSONを生成せず、反映予定の内容だけレポートに出す"
     )
 
+    apply_llm_suggestions_parser = subparsers.add_parser(
+        "apply-llm-suggestions",
+        help="ChatGPT/Claude等の回答Markdownを読み込み、ページ別の改善候補として構造化"
+        "（lesson_pages.jsonへの自動反映は行わない）",
+    )
+    apply_llm_suggestions_parser.add_argument(
+        "--lesson-pages", required=True, help="元になるlesson_pages.json（editable配下・OCR補正済み等）"
+    )
+    apply_llm_suggestions_parser.add_argument(
+        "--suggestions", required=True, help="ChatGPT/Claude等の回答Markdown"
+    )
+    apply_llm_suggestions_parser.add_argument(
+        "--candidates-output",
+        default="output/llm_suggestion_candidates.json",
+        help="構造化した改善候補JSONの出力先（既定: output/llm_suggestion_candidates.json）",
+    )
+    apply_llm_suggestions_parser.add_argument(
+        "--report",
+        default="output/llm_suggestion_report.md",
+        help="人間確認用Markdownレポートの出力先（既定: output/llm_suggestion_report.md）",
+    )
+
     docx_parser = subparsers.add_parser("docx", help="Word教材(docx)を生成")
     docx_parser.add_argument("--input", required=True, help="入力JSON")
     docx_parser.add_argument("--output", required=True, help="出力docx")
@@ -797,6 +826,28 @@ def main() -> None:
             })
             if not args.dry_run:
                 logger.record_generated_file(args.output)
+            logger.record_generated_file(args.report)
+        elif args.command == "apply-llm-suggestions":
+            document = load_lesson_document(args.lesson_pages)
+            suggestions_text = load_llm_suggestions_markdown(args.suggestions)
+            parsed = parse_llm_suggestions(suggestions_text)
+            candidates_data = build_llm_suggestion_candidates(
+                document, parsed, source_lesson_pages=args.lesson_pages, source_suggestions=args.suggestions
+            )
+            write_llm_suggestion_candidates_json(args.candidates_output, candidates_data)
+            validate_generated_file(args.candidates_output, "apply-llm-suggestions(candidates)")
+            write_text(
+                args.report,
+                render_llm_suggestion_report_markdown(
+                    document, candidates_data,
+                    lesson_pages_path=args.lesson_pages, suggestions_path=args.suggestions,
+                    candidates_output=args.candidates_output, report_path=args.report,
+                ),
+            )
+            validate_generated_file(args.report, "apply-llm-suggestions")
+            logger.add_section("INPUT", {"lesson_pages_path": args.lesson_pages, "suggestions_path": args.suggestions})
+            logger.add_section("LLM_SUGGESTIONS", candidates_data["summary"])
+            logger.record_generated_file(args.candidates_output)
             logger.record_generated_file(args.report)
         elif args.command == "docx":
             document = load_lesson_document(args.input)

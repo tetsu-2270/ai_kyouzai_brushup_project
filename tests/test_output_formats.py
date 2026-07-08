@@ -1910,3 +1910,132 @@ def test_apply_ocr_corrections_cli_dry_run_does_not_write_output(tmp_path, monke
 
     assert not output_path.exists()
     assert report_path.exists()
+
+
+# --- LLM改善案の構造化候補生成（apply-llm-suggestions） -----------------------------------
+
+
+def test_apply_llm_suggestions_cli_generates_candidates_and_report(tmp_path, monkeypatch):
+    """lesson-pages→apply-llm-suggestionsの流れで、候補JSONとレポートの両方が
+    生成されることを確認する（CLIからの実行確認）。"""
+    lesson_pages_path = tmp_path / "output" / "editable" / "lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages", "--mode", "proofread",
+            "--input", "examples/sample_pages.json",
+            "--output", str(lesson_pages_path),
+        ],
+    )
+    main()
+
+    suggestions_path = tmp_path / "llm_response.md"
+    suggestions_path.write_text(
+        "## Page 1: サンプル記事 001\n\n"
+        "- 現状の問題点：タイトルが硬い\n"
+        "- 改善方針：やわらかくする\n"
+        "- title 改善案：やさしいサンプル記事001\n",
+        encoding="utf-8",
+    )
+
+    candidates_path = tmp_path / "output" / "llm_suggestion_candidates.json"
+    report_path = tmp_path / "output" / "llm_suggestion_report.md"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "apply-llm-suggestions",
+            "--lesson-pages", str(lesson_pages_path), "--suggestions", str(suggestions_path),
+            "--candidates-output", str(candidates_path), "--report", str(report_path),
+        ],
+    )
+    main()
+
+    assert candidates_path.exists()
+    assert candidates_path.stat().st_size > 0
+    assert report_path.exists()
+    assert report_path.stat().st_size > 0
+
+    import json
+    data = json.loads(candidates_path.read_text(encoding="utf-8"))
+    assert data["candidates"]
+    assert data["candidates"][0]["field"] == "title"
+    assert data["candidates"][0]["status"] == "proposed"
+
+
+def test_apply_llm_suggestions_cli_default_output_paths(tmp_path, monkeypatch):
+    """--candidates-output/--reportを省略した場合、既定パスに生成されることを確認する。"""
+    lesson_pages_path = tmp_path / "lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages", "--mode", "proofread",
+            "--input", "examples/sample_pages.json",
+            "--output", str(lesson_pages_path),
+        ],
+    )
+    main()
+
+    suggestions_path = tmp_path / "llm_response.md"
+    suggestions_path.write_text("## Page 1: T\n\n- title 改善案：新タイトル\n", encoding="utf-8")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "apply-llm-suggestions", "--lesson-pages", str(lesson_pages_path), "--suggestions", str(suggestions_path)],
+    )
+    main()
+
+    assert (tmp_path / "output" / "llm_suggestion_candidates.json").exists()
+    assert (tmp_path / "output" / "llm_suggestion_report.md").exists()
+
+
+def test_apply_llm_suggestions_cli_accepts_ocr_fixed_input(tmp_path, monkeypatch):
+    """apply-ocr-correctionsが生成したlesson_pages.ocr_fixed.jsonを
+    --lesson-pagesの入力として使えることを確認する。"""
+    editable_path = tmp_path / "output" / "editable" / "lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages", "--mode", "proofread",
+            "--input", "examples/sample_pages.json",
+            "--output", str(editable_path),
+        ],
+    )
+    main()
+
+    candidates_path = tmp_path / "output" / "ocr_correction_candidates.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "ocr-check", "--input", str(editable_path),
+            "--candidates-output", str(candidates_path),
+            "--output", str(tmp_path / "output" / "ocr_check_report.md"),
+        ],
+    )
+    main()
+
+    ocr_fixed_path = tmp_path / "output" / "editable" / "lesson_pages.ocr_fixed.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "apply-ocr-corrections",
+            "--input", str(editable_path), "--candidates", str(candidates_path),
+            "--output", str(ocr_fixed_path), "--report", str(tmp_path / "output" / "ocr_apply_report.md"),
+        ],
+    )
+    main()
+
+    suggestions_path = tmp_path / "llm_response.md"
+    suggestions_path.write_text("## Page 1: T\n\n- title 改善案：新タイトル\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "apply-llm-suggestions",
+            "--lesson-pages", str(ocr_fixed_path), "--suggestions", str(suggestions_path),
+            "--candidates-output", str(tmp_path / "output" / "llm_suggestion_candidates.json"),
+            "--report", str(tmp_path / "output" / "llm_suggestion_report.md"),
+        ],
+    )
+    main()
+
+    assert (tmp_path / "output" / "llm_suggestion_candidates.json").exists()

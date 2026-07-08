@@ -16,7 +16,8 @@ examples/
 src/
   cli.py                     # CLI入口。check-ocr / import-source / build-all / regenerate / lesson-pages / review-report /
                               # generate / canva / ocr-check / apply-ocr-corrections / llm-handoff /
-                              # edit-plan-template / docx / pdf / scenario / canva-sync / wp-publish の17サブコマンド
+                              # apply-llm-suggestions / edit-plan-template / docx / pdf / scenario / canva-sync /
+                              # wp-publish の18サブコマンド
   ocr_check.py                 # lesson_pages.jsonのOCR品質（誤認識・文字化け・不自然な表記）を検出し、
                               # レポート(ocr_check_report.md)と補正候補JSON(ocr_correction_candidates.json)を
                               # 生成。自動修正・自動反映は行わない（詳細はdocs/13参照）
@@ -25,6 +26,9 @@ src/
                               # （詳細はdocs/14参照）
   llm_handoff.py               # editable/lesson_pages.jsonから、ChatGPT/Claude等へ手作業で貼り付けるための
                               # Markdownを生成（LLM出力の自動取り込みは行わない。詳細はdocs/11参照）
+  llm_suggestions.py            # ChatGPT/Claude等の改善案Markdownを読み込み、ページ別の改善候補
+                              # （llm_suggestion_candidates.json/llm_suggestion_report.md）に構造化。
+                              # lesson_pages.jsonへの自動反映は行わない（詳細はdocs/15参照）
   edit_plan.py                 # LLM改善案の採用判断シート（edit_plan_template.md）を生成。LLM回答を
                               # そのまま反映せず、採用判断を整理してから手編集する運用を支援（詳細はdocs/12参照）
   import_source.py           # 元資料(画像/PDF/PPTX)からのテキスト・画像自動取り込み（imported_pages.json+画像アセット生成）。
