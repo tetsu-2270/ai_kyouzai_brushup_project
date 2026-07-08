@@ -93,6 +93,7 @@ regenerate で再出力する
       "field": "body",
       "original": "一買",
       "suggested": "一貫",
+      "action": "replace",
       "severity": "high",
       "reason": "OCR誤認識辞書に一致します（一買 → 一貫）",
       "detection_type": "common_ocr_misread",
@@ -112,17 +113,19 @@ regenerate で再出力する
 | フィールド | 意味 |
 |---|---|
 | `candidate_id` | 候補の一意なID（例: `ocr-0001`） |
-| `page_no` / `page_index` | 表示上のページ番号 / `pages`配列上のindex（将来の反映処理で使用） |
+| `page_no` / `page_index` | 表示上のページ番号 / `pages`配列上のindex（`apply-ocr-corrections`の反映処理で使用） |
 | `field` | 検出元の項目（`title`/`summary`/`body`/`notes`/`layout_instruction`） |
 | `original` / `suggested` | 検出された元の文字列 / 修正候補（断定できない場合は`null`） |
+| `action` | `replace`（置換）/`delete`（削除候補）/`source_check`（元画像確認が必須。詳細は7.1節） |
 | `severity` | `high`/`medium`/`low` |
+| `confidence` | `high`/`medium`/`low`（推定の確からしさ） |
 | `reason` | 検出理由 |
-| `detection_type` | `common_ocr_misread`/`garbled_latin`/`unusual_symbol`/`incomplete_sentence`/`spacing` |
+| `detection_type` | `common_ocr_misread`/`inferred_ocr_correction`/`source_check_required`/`garbled_latin`/`unusual_symbol`/`incomplete_sentence`/`spacing` |
 | `requires_image_check` | 元画像確認を推奨するかどうか |
-| `status` | 初期値は`proposed`。将来`approved`/`rejected`等へ拡張予定 |
-| `human_note` | 人間がメモを書くための空欄 |
+| `status` | 初期値は検出内容により異なる（4.1節参照）。人間が`approved`/`rejected`等へ変更する |
+| `human_note` | 人間がメモを書くための欄。推定修正候補・削除候補には検出時点の注記が入っていることがある |
 
-**このJSONは今回は自動反映されません。** 将来、`status`を`approved`等に変更したうえで、`apply-ocr-corrections`（今回は未実装）のような機能で`editable/lesson_pages.json`へ反映できるようにするための構造化データです。
+**このJSONは今回は自動反映されません。** 人間が`status`を`approved`に変更した候補だけ、[`apply-ocr-corrections`](14_apply_ocr_corrections_workflow.md)で`editable/lesson_pages.json`へ反映できます（ただし`action: delete`の候補は`apply-ocr-corrections`側でも今回は反映されません。7.1節参照）。
 
 ## 7. 重要度の見方
 
@@ -131,6 +134,21 @@ regenerate で再出力する
 | 高 | 本文の意味を大きく損ねる可能性が高い／OCR誤認識辞書に一致／文が途中で切れている可能性が高い |
 | 中 | 不自然な英字・記号列／番号崩れ／元画像確認を推奨する箇所 |
 | 低 | 軽微な表記ゆれ／余計な空白／そのままでも読めるが整えた方がよい箇所 |
+
+### 7.1 削除候補・推定修正候補・元画像確認必須候補の分類
+
+「OCR崩れであることは明確だが、正しい復元後の文字列を断定できない」候補を、単に「元画像確認」として一括りにするのではなく、以下の4分類で扱います。実運用（実データでの検証）を踏まえた改善です。
+
+| 分類 | `action` | 初期`status` | `confidence` | 例 |
+|---|---|---|---|---|
+| high confidence correction | `replace` | `proposed` | `high` | 共通説識→共通認識、一買→一貫、有崩す→崩す、生んな経験→そんな経験、どいう→という 等 |
+| deletion candidate（削除候補） | `delete` | `needs_human_review` | `medium` | `ae`/`BQ`/`Ps`/`RSS`のような、日本語教材本文として不自然な短い英字ノイズ |
+| inferred correction candidate（推定修正候補） | `replace` | `needs_source_check` | `low` | 時 9ま1よう→決めましょう、六坂載祭上→※無断転載禁止 等（復元に推測が入るため断定しない） |
+| source check required（元画像確認必須） | `source_check` | `needs_source_check` | `low` | マチオロウーざん、ERRh se rel Cee oe、SAAT こコ全わった等（正しい復元が難しい） |
+
+**削除候補（`action: delete`）について**: 英字だけの短いノイズ・意味のない英数字断片を対象にしますが、固有名詞やURLの可能性がある語句を過検出しすぎないよう、`Instagram`/`SNS`/`AI`/`URL`/`ID`/`OK`/`NG`/`PDF`/`JSON`/`CSV`/`API`/`LLM`等は通常語として許可リストに含めています（`_LATIN_ALLOWLIST`参照）。
+
+**いずれの分類も自動反映はしません。** `status`が`approved`にならない限り[`apply-ocr-corrections`](14_apply_ocr_corrections_workflow.md)では反映されず、さらに`action: delete`の候補は`approved`にしても今回のバージョンでは反映されません（安全側の設計。将来のバージョンで対応検討）。
 
 ## 8. よくあるOCR誤認識例（検出辞書）
 
@@ -144,8 +162,23 @@ regenerate で再出力する
 - 共通説識 → 共通認識（高）
 - 人帳面 → 几帳面（高）
 - 叱嘘激励 → 叱咤激励（高）
-- 全1 1問 → 全11問（高）
+- 全1 1問 / 全1 1 問 → 全11問（高）
+- 有崩す → 崩す（高）
+- 生んな経験 → そんな経験（高）
+- どいう → という（高）
 - 1 つ → 1つ（低）
+
+推定修正候補の辞書（`_INFERRED_CORRECTION_DICTIONARY`。復元に推測が入るため`confidence: low`・`status: needs_source_check`）：
+
+- 時 9ま1よう → 決めましょう
+- ベネフィット計理想の未来 → ベネフィット＝理想の未来
+- 六坂載祭上 → ※無断転載禁止
+
+元画像確認が必須の候補（`_SOURCE_CHECK_REQUIRED_PHRASES`。`suggested`は空のまま）：
+
+- マチオロウーざん
+- ERRh se rel Cee oe
+- SAAT こコ全わった
 
 ## 9. システムが検出する内容
 
@@ -169,8 +202,9 @@ regenerate で再出力する
 
 ## 10. 人間が最終判断する内容
 
-- 各候補を「採用」「不採用」「元画像確認」に振り分ける。
+- 各候補の`status`を`approved`（採用）/`rejected`（不採用）/`needs_source_check`（元資料確認）/`needs_human_review`（内容確認）に振り分ける。
 - 修正候補（`suggested`）が空、または断定できない候補は、元画像と照らし合わせて判断する。
+- 削除候補（`action: delete`）は、固有名詞やURLの可能性がないか文脈を確認してから判断する。
 - 数字・日付・地名・固有名詞に関わる候補は特に慎重に判断する。
 
 ## 11. 現段階では自動修正しないこと
@@ -179,9 +213,9 @@ regenerate で再出力する
 - 検出した候補の自動置換・自動反映は行いません。
 - `editable/lesson_pages.json`への反映は、現段階では人間が`title`/`summary`/`body`/`notes`/`layout_instruction`を確認して行います。`source_page_no`/`source_image`/`assets`は通常編集しません。
 
-## 12. 将来的には採用済み候補をシステム反映する方針
+## 12. 採用済み候補をシステム反映する方針
 
-将来的には、`ocr_correction_candidates.json`の`status`を`approved`に変更した候補を、`apply-ocr-corrections`（仮称・今回は未実装）のようなコマンドで`editable/lesson_pages.json`へ反映できるようにする想定です。今回はその前段階として、検出・分類・構造化データ出力までを実装しています。
+`ocr_correction_candidates.json`の`status`を`approved`に変更した候補は、[`apply-ocr-corrections`](14_apply_ocr_corrections_workflow.md)コマンドで`editable/lesson_pages.json`へ反映できます。ただし`action: delete`の削除候補は、`approved`にしても今回のバージョンでは反映されません（安全側の設計。7.1節参照）。将来的には、削除候補の反映にも対応する可能性があります。
 
 ## 13. OCR補正後にllm-handoffへ進む流れ
 

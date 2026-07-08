@@ -590,3 +590,24 @@ def test_docs_15_explains_no_auto_reflection():
 def test_docs_15_explains_ocr_fixed_input_recommendation():
     text = _read(REPO_ROOT / "docs" / "15_llm_suggestion_candidates_workflow.md")
     assert "ocr_fixed" in text
+
+
+# --- OCR崩れ候補の削除・推定修正分類（deletion candidate / inferred correction candidate） ------
+
+
+def test_docs_13_explains_deletion_and_inferred_candidates():
+    text = _read(REPO_ROOT / "docs" / "13_ocr_quality_check_workflow.md")
+    assert "deletion candidate" in text
+    assert "inferred correction candidate" in text
+    assert "source check required" in text
+
+
+def test_docs_14_explains_delete_action_not_applied():
+    text = _read(REPO_ROOT / "docs" / "14_apply_ocr_corrections_workflow.md")
+    assert "action: delete" in text
+    assert "delete_action_not_supported" in text
+
+
+def test_readme_explains_ocr_candidate_classification():
+    text = _read(REPO_ROOT / "README.md")
+    assert "deletion candidate" in text

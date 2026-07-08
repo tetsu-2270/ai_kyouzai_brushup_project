@@ -17,7 +17,10 @@ from .parser import load_lesson_document
 # ocr_check.py側でもlayout_instructionはOCR崩れ検出の主対象から除外している）。
 
 _APPLICABLE_FIELDS = ("title", "summary", "body", "notes")
-_KNOWN_STATUSES = ("approved", "proposed", "rejected", "needs_image_check")
+_KNOWN_STATUSES = (
+    "approved", "proposed", "rejected", "needs_image_check",
+    "needs_source_check", "needs_human_review",
+)
 _IMAGE_CHECK_SUGGESTED_MARKERS = ("元画像確認",)
 
 _SKIP_REASON_LABELS = {
@@ -31,6 +34,7 @@ _SKIP_REASON_LABELS = {
     "original_not_found": "originalが対象field内に見つからない",
     "duplicate_or_already_applied": "同一candidate_idが重複している",
     "layout_instruction_skipped": "layout_instructionは自動反映対象外",
+    "delete_action_not_supported": "action: deleteの反映は今回未対応",
 }
 
 
@@ -82,9 +86,9 @@ def should_apply_candidate(
     反映しない場合は`(None, スキップ理由)`を返す。
 
     反映条件（すべて満たす場合のみ反映）:
-    status=approved / suggestedが実在し元画像確認系でない / fieldが反映対象
-    （title/summary/body/notes。layout_instructionは対象外） / 対象ページが特定できる /
-    original が対象field内に実在する。
+    status=approved / action が delete ではない（削除反映は今回未対応） / suggestedが実在し
+    元画像確認系でない / fieldが反映対象（title/summary/body/notes。layout_instructionは
+    対象外） / 対象ページが特定できる / original が対象field内に実在する。
     """
     candidate_id = candidate.get("candidate_id")
     if candidate_id and candidate_id in applied_ids:
@@ -95,6 +99,11 @@ def should_apply_candidate(
         if status in _KNOWN_STATUSES:
             return None, "status_not_approved"
         return None, "unknown_status"
+
+    if candidate.get("action") == "delete":
+        # 削除候補（ocr_check.pyのdetect_garbled_latin_sequences等）は、approvedであっても
+        # 今回のバージョンでは自動反映しない（安全側の設計。将来的な対応候補）。
+        return None, "delete_action_not_supported"
 
     field = candidate.get("field")
     if not field:
@@ -175,8 +184,8 @@ def _format_purpose_section() -> str:
         "## 1. 目的\n\n"
         "このレポートは、`ocr-check`が生成した`ocr_correction_candidates.json`のうち、"
         "人間が`status: approved`に変更した候補だけを`lesson_pages.json`へ反映した結果を"
-        "示すものです。`approved`以外の候補（`proposed`/`rejected`/`needs_image_check`等）は"
-        "反映されません。"
+        "示すものです。`approved`以外の候補（`proposed`/`rejected`/`needs_image_check`/"
+        "`needs_source_check`/`needs_human_review`等）は反映されません。"
     )
 
 
@@ -185,10 +194,12 @@ def _format_execution_conditions_section() -> str:
         "## 2. 実行条件\n\n"
         "以下をすべて満たす候補のみ反映しています。\n\n"
         "1. `status`が`approved`\n"
-        "2. `suggested`が存在し、空文字・`(元画像確認)`等の元画像確認を示す値ではない\n"
-        "3. `field`が`title`/`summary`/`body`/`notes`のいずれか（`layout_instruction`は対象外）\n"
-        "4. `page_index`または`page_no`から対象ページを特定できる\n"
-        "5. 対象field内に`original`が実在する\n\n"
+        "2. `action`が`delete`ではない（削除候補の反映は今回は未対応。安全側の設計として"
+        "見送っています）\n"
+        "3. `suggested`が存在し、空文字・`(元画像確認)`等の元画像確認を示す値ではない\n"
+        "4. `field`が`title`/`summary`/`body`/`notes`のいずれか（`layout_instruction`は対象外）\n"
+        "5. `page_index`または`page_no`から対象ページを特定できる\n"
+        "6. 対象field内に`original`が実在する\n\n"
         "`layout_instruction`は生成側のレイアウト指示・内部参照でありOCR本文ではないため、"
         "今回は自動反映の対象外としています。"
     )
@@ -225,6 +236,7 @@ def _format_overall_summary_section(
         f"- original未検出による未反映件数: {skip_counts.get('original_not_found', 0)}",
         f"- field不正による未反映件数: {skip_counts.get('invalid_field', 0) + skip_counts.get('field_missing', 0) + skip_counts.get('layout_instruction_skipped', 0)}",
         f"- page特定失敗による未反映件数: {skip_counts.get('page_not_found', 0)}",
+        f"- action: deleteによる未反映件数: {skip_counts.get('delete_action_not_supported', 0)}",
     ]
     return "\n".join(lines)
 
@@ -353,8 +365,11 @@ def _format_notes_section() -> str:
     return (
         "## 11. 注意事項\n\n"
         "- このレポートは`ocr_correction_candidates.json`でstatusを`approved`にした候補のみを"
-        "対象にしています。まだ判断していない候補（`proposed`）や、`rejected`/`needs_image_check`"
-        "とした候補は反映されていません。\n"
+        "対象にしています。まだ判断していない候補（`proposed`）や、`rejected`/`needs_image_check`/"
+        "`needs_source_check`/`needs_human_review`とした候補は反映されていません。\n"
+        "- 削除候補（`action: delete`）は、`approved`にしても今回のバージョンでは反映されません"
+        "（`delete_action_not_supported`）。本文から手動で削除するか、将来のバージョンでの対応を"
+        "待ってください。\n"
         "- `layout_instruction`宛の候補は、statusに関わらず自動反映していません。必要であれば"
         "人間が直接確認・編集してください。\n"
         "- 元の`--input`ファイルは変更していません。補正後のファイルは別パス（`--output`）に"

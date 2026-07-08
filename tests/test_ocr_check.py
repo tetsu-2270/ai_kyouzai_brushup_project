@@ -5,6 +5,8 @@ from src.ocr_check import (
     detect_common_ocr_misreads,
     detect_garbled_latin_sequences,
     detect_incomplete_sentences,
+    detect_inferred_ocr_corrections,
+    detect_source_check_required_phrases,
     detect_suspicious_tokens,
     detect_title_anomalies,
     detect_unusual_symbols,
@@ -267,3 +269,92 @@ def test_markdown_report_excludes_layout_instruction_internal_words():
     data = build_ocr_correction_candidates(document)
     text = render_ocr_check_report_markdown(document, data)
     assert "検出された候補はありませんでした" in text
+
+
+# --- 削除候補・推定修正候補・元画像確認必須候補の分類 -------------------------------------
+
+
+def test_common_misreads_are_high_confidence_correction():
+    """明確な誤字はhigh confidence correction（status: proposed, action: replace）として出る。"""
+    candidates = detect_common_ocr_misreads("共通説識を持つ")
+    assert candidates[0]["action"] == "replace"
+    assert candidates[0]["status"] == "proposed"
+    assert candidates[0]["confidence"] == "high"
+
+
+def test_zenbu_11_mon_with_extra_space_is_candidated():
+    candidates = detect_common_ocr_misreads("全1 1 問あります")
+    assert any(c["original"] == "全1 1 問" and c["suggested"] == "全11問" for c in candidates)
+
+
+def test_arikuzusu_is_candidated():
+    candidates = detect_common_ocr_misreads("有崩すことができる")
+    assert any(c["original"] == "有崩す" and c["suggested"] == "崩す" for c in candidates)
+
+
+def test_sonna_keiken_is_candidated():
+    candidates = detect_common_ocr_misreads("生んな経験をした")
+    assert any(c["original"] == "生んな経験" and c["suggested"] == "そんな経験" for c in candidates)
+
+
+def test_doiu_is_candidated():
+    candidates = detect_common_ocr_misreads("どいうことか分からない")
+    assert any(c["original"] == "どいう" and c["suggested"] == "という" for c in candidates)
+
+
+def test_mudan_tensai_kinshi_is_candidated_as_inferred():
+    """「六坂載祭上 → ※無断転載禁止」は推定修正候補（needs_source_check）として出る。"""
+    candidates = detect_inferred_ocr_corrections("六坂載祭上と書いてある")
+    assert len(candidates) == 1
+    assert candidates[0]["suggested"] == "※無断転載禁止"
+    assert candidates[0]["status"] == "needs_source_check"
+    assert candidates[0]["detection_type"] == "inferred_ocr_correction"
+
+
+def test_short_english_noise_is_deletion_candidate():
+    """ae/BQ/Ps/RSSのような短い英字ノイズは削除候補（action: delete）として出る。"""
+    for noise in ("ae", "BQ", "Ps", "RSS"):
+        candidates = detect_garbled_latin_sequences(f"本文中に{noise}が混入")
+        assert candidates, f"failed for: {noise}"
+        assert candidates[0]["action"] == "delete"
+        assert candidates[0]["status"] == "needs_human_review"
+
+
+def test_allowed_terms_are_not_deletion_candidates():
+    """Instagram/SNS/AI/URL/ID/OK/NG/PDF/JSON/CSV/API/LLMは削除候補にしないことを確認する。"""
+    allowed_terms = ("Instagram", "SNS", "AI", "URL", "ID", "OK", "NG", "PDF", "JSON", "CSV", "API", "LLM")
+    for term in allowed_terms:
+        candidates = detect_garbled_latin_sequences(f"これは{term}を使った説明です")
+        assert candidates == [], f"failed for: {term}"
+
+
+def test_source_check_required_phrases_are_flagged():
+    """マチオロウーざん/ERRh se rel Cee oe/SAAT こコ全わったはsource check requiredとして出る。"""
+    for phrase in ("マチオロウーざん", "ERRh se rel Cee oe", "SAAT こコ全わった"):
+        candidates = detect_source_check_required_phrases(f"本文に{phrase}が含まれる")
+        assert len(candidates) == 1, f"failed for: {phrase}"
+        assert candidates[0]["status"] == "needs_source_check"
+        assert candidates[0]["action"] == "source_check"
+        assert candidates[0]["detection_type"] == "source_check_required"
+
+
+def test_candidates_json_includes_action_confidence_human_note():
+    document = _document([_page(body="共通説識を持つ")])
+    data = build_ocr_correction_candidates(document)
+    candidate = data["candidates"][0]
+    assert "action" in candidate
+    assert "confidence" in candidate
+    assert "human_note" in candidate
+    assert candidate["action"] == "replace"
+
+
+def test_report_includes_classification_breakdown():
+    document = _document([
+        _page(page_no=1, body="共通説識を持つ。RSSが混入。六坂載祭上と書いてある。ERRh se rel Cee oe。"),
+    ])
+    data = build_ocr_correction_candidates(document)
+    text = render_ocr_check_report_markdown(document, data)
+    assert "high confidence correction" in text
+    assert "deletion candidate" in text
+    assert "inferred correction candidate" in text
+    assert "source check required" in text

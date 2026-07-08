@@ -227,3 +227,53 @@ def test_report_dry_run_note():
         output_path="out.json", report_path="report.md", dry_run=True,
     )
     assert "dry-run" in text
+
+
+# --- 削除候補・推定修正候補・元画像確認必須候補の反映制御 -----------------------------------
+
+
+def test_needs_source_check_status_is_not_applied():
+    document = _document([_page(body="六坂載祭上と書いてある")])
+    candidates_data = {"candidates": [_candidate(status="needs_source_check", original="六坂載祭上", suggested="※無断転載禁止")]}
+    result = apply_ocr_corrections(document, candidates_data)
+    assert result["applied"] == []
+    assert result["skipped"][0]["skip_reason"] == "status_not_approved"
+
+
+def test_needs_human_review_status_is_not_applied():
+    document = _document([_page(body="RSSが混入")])
+    candidates_data = {"candidates": [_candidate(status="needs_human_review", field="body", original="RSS", suggested=None, action="delete")]}
+    result = apply_ocr_corrections(document, candidates_data)
+    assert result["applied"] == []
+    assert result["skipped"][0]["skip_reason"] == "status_not_approved"
+
+
+def test_delete_action_is_not_applied_even_when_approved():
+    """action: deleteは、approvedであっても今回は自動反映しないことを確認する。"""
+    document = _document([_page(body="RSSが混入")])
+    candidates_data = {"candidates": [_candidate(status="approved", field="body", original="RSS", suggested=None, action="delete")]}
+    result = apply_ocr_corrections(document, candidates_data)
+    assert result["applied"] == []
+    assert result["skipped"][0]["skip_reason"] == "delete_action_not_supported"
+    assert document.pages[0].body == "RSSが混入"
+
+
+def test_report_shows_delete_action_not_supported_reason():
+    document = _document([_page(body="RSSが混入")])
+    candidates_data = {"candidates": [_candidate(status="approved", field="body", original="RSS", suggested=None, action="delete")]}
+    result = apply_ocr_corrections(document, candidates_data)
+    text = render_ocr_apply_report_markdown(
+        result, candidates_data,
+        input_path="in.json", candidates_path="cand.json",
+        output_path="out.json", report_path="report.md",
+    )
+    assert "delete_action_not_supported" in text
+
+
+def test_existing_approved_replace_candidate_still_applies_as_before():
+    """action未指定（既存構造）のapproved置換候補は、従来通り反映されることを確認する。"""
+    document = _document([_page(body="一買性のある文章です")])
+    candidates_data = {"candidates": [_candidate(status="approved", original="一買", suggested="一貫")]}
+    result = apply_ocr_corrections(document, candidates_data)
+    assert len(result["applied"]) == 1
+    assert result["document"].pages[0].body == "一貫性のある文章です"

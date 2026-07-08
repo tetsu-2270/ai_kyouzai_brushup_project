@@ -26,6 +26,7 @@ _SEVERITY_LABELS = {"high": "高", "medium": "中", "low": "低"}
 
 # 各エントリは(修正候補, 重要度)。「1 つ」→「1つ」のように内容を損なわない軽微な誤認識は
 # severityを下げられるよう、辞書全体を一律severityにしない。
+# 「high confidence correction」（修正後がほぼ一意に近いもの）に相当する辞書。
 _OCR_MISREAD_DICTIONARY = {
     "一買": ("一貫", "high"),
     "アウトブット": ("アウトプット", "high"),
@@ -36,12 +37,32 @@ _OCR_MISREAD_DICTIONARY = {
     "人帳面": ("几帳面", "high"),
     "叱嘘激励": ("叱咤激励", "high"),
     "全1 1問": ("全11問", "high"),
+    "全1 1 問": ("全11問", "high"),
+    "有崩す": ("崩す", "high"),
+    "生んな経験": ("そんな経験", "high"),
+    "どいう": ("という", "high"),
     "1 つ": ("1つ", "low"),
 }
 
+# 「inferred correction candidate」: OCR崩れであることは明確だが、復元に推測が入るもの。
+# 断定はできないため、status: needs_source_check・confidence: low で提示する。
+_INFERRED_CORRECTION_DICTIONARY = {
+    "時 9ま1よう": "決めましょう",
+    "ベネフィット計理想の未来": "ベネフィット＝理想の未来",
+    "六坂載祭上": "※無断転載禁止",
+}
+
+# 「source check required」: OCR崩れであることは明確だが、正しい復元が難しいもの。
+# suggestedを断定せず、元画像確認が必須の候補として提示する。
+_SOURCE_CHECK_REQUIRED_PHRASES = (
+    "マチオロウーざん",
+    "ERRh se rel Cee oe",
+    "SAAT こコ全わった",
+)
+
 
 def detect_common_ocr_misreads(text: str) -> list[dict[str, Any]]:
-    """OCR誤認識辞書（`_OCR_MISREAD_DICTIONARY`）に一致する語句を検出する。
+    """OCR誤認識辞書（`_OCR_MISREAD_DICTIONARY`）に一致する語句を検出する（high confidence correction）。
 
     辞書は将来拡張しやすいよう、この関数の外側にモジュールレベル定数として定義している。
     """
@@ -57,6 +78,60 @@ def detect_common_ocr_misreads(text: str) -> list[dict[str, Any]]:
                 "reason": f"OCR誤認識辞書に一致します（{wrong} → {correct}）",
                 "detection_type": "common_ocr_misread",
                 "requires_image_check": False,
+                "action": "replace",
+                "confidence": severity,
+                "status": "proposed",
+            })
+    return candidates
+
+
+def detect_inferred_ocr_corrections(text: str) -> list[dict[str, Any]]:
+    """OCR崩れであることは明確だが、復元に推測が入る候補（inferred correction candidate）を検出する。
+
+    辞書一致による検出のみで、断定的な自動反映は行わない前提。`status: needs_source_check`・
+    `confidence: low`で提示し、`apply-ocr-corrections`では`approved`にならない限り反映されない。
+    """
+    if not text:
+        return []
+    candidates = []
+    for wrong, correct in _INFERRED_CORRECTION_DICTIONARY.items():
+        if wrong in text:
+            candidates.append({
+                "original": wrong,
+                "suggested": correct,
+                "severity": "medium",
+                "reason": f"OCR崩れの可能性が高く、推定修正候補です（{wrong} → {correct}）",
+                "detection_type": "inferred_ocr_correction",
+                "requires_image_check": True,
+                "action": "replace",
+                "confidence": "low",
+                "status": "needs_source_check",
+                "human_note": "推定修正候補。元画像確認推奨。",
+            })
+    return candidates
+
+
+def detect_source_check_required_phrases(text: str) -> list[dict[str, Any]]:
+    """OCR崩れであることは明確だが、正しい復元が難しい候補（source check required）を検出する。
+
+    `suggested`を断定せず、`status: needs_source_check`で元画像確認が必要な候補として提示する。
+    """
+    if not text:
+        return []
+    candidates = []
+    for phrase in _SOURCE_CHECK_REQUIRED_PHRASES:
+        if phrase in text:
+            candidates.append({
+                "original": phrase,
+                "suggested": None,
+                "severity": "medium",
+                "reason": "OCR崩れの可能性が高いですが、正しい復元が難しいため元画像の確認が必要です",
+                "detection_type": "source_check_required",
+                "requires_image_check": True,
+                "action": "source_check",
+                "confidence": "low",
+                "status": "needs_source_check",
+                "human_note": "元画像確認推奨。",
             })
     return candidates
 
@@ -67,7 +142,7 @@ _LATIN_RUN_RE = re.compile(r"[A-Za-z]+(?:[ \t]+[A-Za-z]+)*")
 
 _LATIN_ALLOWLIST = {
     "url", "sns", "instagram", "canva", "gamma", "chatgpt", "claude",
-    "pdf", "docx", "pptx", "png", "jpg", "jpeg", "webp", "csv", "json", "html", "md",
+    "pdf", "docx", "pptx", "png", "jpg", "jpeg", "webp", "csv", "json", "html", "md", "api",
     "ai", "llm", "ocr", "ok", "ng", "id", "web", "seo", "qr", "pc",
     "youtube", "line", "wifi", "wi-fi", "no", "cm", "kg", "app",
     # システム内部の参照語・レイアウト指示由来の語句（OCR崩れではないため許可語として扱う）
@@ -77,12 +152,14 @@ _LATIN_ALLOWLIST = {
 
 
 def detect_garbled_latin_sequences(text: str) -> list[dict[str, Any]]:
-    """日本語教材本文として不自然な英字の並びを「疑わしい候補」として検出する。
+    """日本語教材本文として不自然な英字の並びを「削除候補（deletion candidate）」として検出する。
 
-    URL/SNS/Instagram/Canva/PDF等の意図的な英語表記を誤検出しないよう、`_LATIN_ALLOWLIST`に
+    URL/SNS/Instagram/Canva/PDF/API等の意図的な英語表記を誤検出しないよう、`_LATIN_ALLOWLIST`に
     一致する語句のみで構成される部分は対象外にする。1文字トークンは列挙記号等と区別できない
-    ため対象外とし、2文字以上のトークンを持つ並びのみ検出する。完全な判定は難しいため、
-    多少の過検出は許容し「要確認候補」として扱う。
+    ため対象外とし、2文字以上のトークンを持つ並びのみ検出する。`_SOURCE_CHECK_REQUIRED_PHRASES`
+    に該当する箇所は`detect_source_check_required_phrases`側の分類に譲り、ここでは扱わない
+    （固有名詞・URLの可能性がある語句を過検出しすぎないよう、断定的な削除候補ではなく
+    「削除候補（要人間確認）」として提示し、自動反映はしない）。
     """
     if not text:
         return []
@@ -94,13 +171,19 @@ def detect_garbled_latin_sequences(text: str) -> list[dict[str, Any]]:
             continue
         if all(t.lower() in _LATIN_ALLOWLIST for t in tokens):
             continue
+        if run in _SOURCE_CHECK_REQUIRED_PHRASES:
+            continue
         candidates.append({
             "original": run,
             "suggested": None,
             "severity": "medium",
-            "reason": "日本語教材本文として不自然な英字列の可能性があります",
+            "reason": "日本語教材本文として不自然な英字列であり、削除候補です",
             "detection_type": "garbled_latin",
             "requires_image_check": True,
+            "action": "delete",
+            "confidence": "medium",
+            "status": "needs_human_review",
+            "human_note": "OCRノイズの可能性が高いため、削除候補。元画像確認推奨。",
         })
     return candidates
 
@@ -276,6 +359,8 @@ def detect_suspicious_tokens(text: str) -> list[dict[str, Any]]:
 
 _DETECTORS = (
     detect_common_ocr_misreads,
+    detect_inferred_ocr_corrections,
+    detect_source_check_required_phrases,
     detect_garbled_latin_sequences,
     detect_unusual_symbols,
     detect_incomplete_sentences,
@@ -323,24 +408,33 @@ def build_correction_candidate(
 ) -> dict[str, Any]:
     """検出結果(raw)とページ情報から、`ocr_correction_candidates.json`の候補1件分を組み立てる。
 
-    `confidence`は現段階では`severity`と同等の値を使う（要件上、難しければ同等でよいとされている）。
+    `action`/`confidence`/`status`/`human_note`は、検出器がrawで明示していればそれを使い、
+    明示していない既存検出器（unusual_symbol/incomplete_sentence/spacing等）については
+    後方互換のため以下の既定値にフォールバックする。
+    - `action`: `suggested`があれば`replace`、なければ`source_check`
+    - `confidence`: `severity`と同値
+    - `status`: `proposed`
+    - `human_note`: 空文字
     """
+    suggested = raw.get("suggested")
+    default_action = "replace" if suggested else "source_check"
     return {
         "candidate_id": candidate_id,
         "page_no": page.page_no,
         "page_index": page_index,
         "field": raw["field"],
         "original": raw["original"],
-        "suggested": raw.get("suggested"),
+        "suggested": suggested,
+        "action": raw.get("action", default_action),
         "severity": raw["severity"],
         "reason": raw["reason"],
         "detection_type": raw["detection_type"],
         "source_page_no": list(page.source_page_no) if page.source_page_no else [],
         "source_image": page.source_image or "",
-        "confidence": raw["severity"],
+        "confidence": raw.get("confidence", raw["severity"]),
         "requires_image_check": bool(raw.get("requires_image_check", False)),
-        "status": "proposed",
-        "human_note": "",
+        "status": raw.get("status", "proposed"),
+        "human_note": raw.get("human_note", ""),
     }
 
 
@@ -462,7 +556,9 @@ def _format_detection_summary_section(candidates: list[dict[str, Any]]) -> str:
         by_type[c["detection_type"]] = by_type.get(c["detection_type"], 0) + 1
     type_labels = {
         "common_ocr_misread": "よくあるOCR誤認識候補",
-        "garbled_latin": "意味不明な英字・記号列",
+        "inferred_ocr_correction": "推定修正候補",
+        "source_check_required": "元画像確認が必須の候補",
+        "garbled_latin": "意味不明な英字・記号列（削除候補）",
         "unusual_symbol": "不自然な記号・番号崩れ",
         "incomplete_sentence": "未完の可能性がある文",
         "spacing": "数字と日本語の不自然な空白",
@@ -597,13 +693,36 @@ def _format_correction_candidates_section(candidates: list[dict[str, Any]]) -> s
     if not candidates:
         lines.append("修正候補はありません。")
         return "\n".join(lines)
-    lines.append("| candidate_id | Page | 項目 | 検出語句 | 修正候補 | 重要度 |")
-    lines.append("|---|---|---|---|---|---|")
+
+    high_confidence = [c for c in candidates if c["detection_type"] == "common_ocr_misread" and c["status"] == "proposed"]
+    deletion = [c for c in candidates if c.get("action") == "delete"]
+    inferred = [c for c in candidates if c["detection_type"] == "inferred_ocr_correction"]
+    source_check = [c for c in candidates if c["detection_type"] == "source_check_required"]
+
+    lines.append("### 分類別の件数")
+    lines.append("")
+    lines.append(f"- high confidence correction（`common_ocr_misread`・status: proposed）: {len(high_confidence)}件")
+    lines.append(f"- deletion candidate（`action: delete`）: {len(deletion)}件")
+    lines.append(f"- inferred correction candidate（`inferred_ocr_correction`）: {len(inferred)}件")
+    lines.append(f"- source check required（`source_check_required`）: {len(source_check)}件")
+    lines.append("")
+    lines.append(
+        "削除候補・推定修正候補・元画像確認が必須の候補は、いずれも`status`が`approved`に"
+        "ならない限り`apply-ocr-corrections`で反映されません。特に削除候補（`action: delete`）は、"
+        "`approved`にしても今回のバージョンでは自動反映されません（詳細は"
+        "`docs/14_apply_ocr_corrections_workflow.md`参照）。"
+    )
+    lines.append("")
+    lines.append("### 候補一覧")
+    lines.append("")
+    lines.append("| candidate_id | Page | field | original | suggested | action | status | confidence | reason | human_note |")
+    lines.append("|---|---|---|---|---|---|---|---|---|---|")
     for c in candidates:
-        suggested = c["suggested"] or "(元画像確認)"
+        suggested = c["suggested"] or "(未設定)"
+        human_note = c.get("human_note") or ""
         lines.append(
             f"| {c['candidate_id']} | {c['page_no']} | {c['field']} | {c['original']} | "
-            f"{suggested} | {_SEVERITY_LABELS[c['severity']]} |"
+            f"{suggested} | {c['action']} | {c['status']} | {c['confidence']} | {c['reason']} | {human_note} |"
         )
     return "\n".join(lines)
 
@@ -624,6 +743,13 @@ def _format_human_judgment_section() -> str:
         "## 11. 人間が最終判断すべき箇所\n\n"
         "- 修正候補（`suggested`）が空、または「元画像確認」となっている候補は、システム側では"
         "断定していません。元画像と照らし合わせて人間が判断してください。\n"
+        "- 削除候補（`action: delete`）は、本文からノイズとして削除した方が自然だとシステムが"
+        "判断した候補です。ただし固有名詞・URLの可能性もゼロではないため、削除前に文脈を確認して"
+        "ください。\n"
+        "- 推定修正候補（`inferred_ocr_correction`）は、`suggested`に修正案が入っていても"
+        "断定はできません。元画像を確認したうえで採用可否を判断してください。\n"
+        "- 元画像確認が必須の候補（`source_check_required`）は、正しい復元が難しいため`suggested`が"
+        "空のままのことがあります。必ず元画像を確認してください。\n"
         "- 検出は「疑わしい候補」ベースであり、過検出（実際には問題ない箇所を候補として出す）も"
         "起こり得ます。文脈から見て問題がなければ、不採用としてください。\n"
         "- 意味不明な英字・記号列（`garbled_latin`）は、意図的な英語表記の可能性もあるため、"
@@ -638,12 +764,16 @@ def _format_candidates_json_usage_section(candidates_output: str) -> str:
         "## 12. 補正候補JSONの使い方\n\n"
         f"`{candidates_output}`は、システムが検出した補正候補の構造化データです。\n\n"
         "- 今回はこのJSONを使った自動反映は行いません。\n"
-        "- 人間が各候補を確認し、採用・不採用・元画像確認のいずれかを判断してください。\n"
-        "- 候補1件ごとに`page_no`/`page_index`/`field`/`original`/`suggested`/`severity`/`reason`/"
-        "`status`等を持っています。\n"
-        "- `status`の初期値は`proposed`です。将来的に`approved`/`rejected`/`needs_image_check`等へ"
-        "拡張し、`apply-ocr-corrections`（未実装）のような機能で`editable/lesson_pages.json`へ"
-        "反映できるようにする想定です。\n"
+        "- 人間が各候補を確認し、`status`を`approved`/`rejected`/`needs_source_check`/"
+        "`needs_human_review`のいずれかに変更してください。\n"
+        "- 候補1件ごとに`page_no`/`page_index`/`field`/`original`/`suggested`/`action`"
+        "（`replace`/`delete`/`source_check`）/`severity`/`confidence`/`reason`/`status`/"
+        "`human_note`等を持っています。\n"
+        "- `status`の初期値は、high confidence correctionは`proposed`、削除候補は"
+        "`needs_human_review`、推定修正候補・元画像確認が必須の候補は`needs_source_check`です。\n"
+        "- `apply-ocr-corrections`は`status: approved`の候補だけを反映します"
+        "（`action: delete`は`approved`にしても今回は反映されません。詳細は"
+        "`docs/14_apply_ocr_corrections_workflow.md`参照）。\n"
         "- 現段階では、このJSONは「将来の自動反映に備えた候補データ」として扱ってください。"
     )
 
@@ -653,12 +783,11 @@ def _format_correction_workflow_section() -> str:
         "## 13. 修正作業の進め方\n\n"
         "- このレポートは、システムがOCR崩れ候補と修正候補を検出するためのものです。自動修正は"
         "行いません。\n"
-        "- 人間は、検出された候補を「採用」「不採用」「元画像確認」に振り分けてください。\n"
-        "- 修正する場合は、現段階では`output/editable/lesson_pages.json`の`title`/`summary`/"
-        "`body`/`notes`/`layout_instruction`を人間が確認して反映してください。\n"
+        "- 人間は、検出された候補の`status`を`approved`（採用）/`rejected`（不採用）/"
+        "`needs_source_check`（元資料確認）/`needs_human_review`（内容確認）に振り分けてください。\n"
+        "- `approved`にした候補は`apply-ocr-corrections`で`lesson_pages.json`へ反映できます"
+        "（`action: delete`の候補は今回は反映対象外です）。\n"
         "- `source_page_no`/`source_image`/`assets`は通常編集しないでください。\n"
-        "- 将来的には、`ocr_correction_candidates.json`をもとに、採用済み候補をシステムが反映"
-        "できるようにする想定です（今回は未実装）。\n"
         "- OCR補正を先に行うと、`llm-handoff`実行後のLLMの回答が教材改善に集中しやすくなります。"
         "先にOCR補正を行わないと、LLM回答が誤字修正の指摘中心になりやすい点に注意してください。"
     )

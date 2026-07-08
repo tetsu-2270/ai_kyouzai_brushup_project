@@ -34,12 +34,14 @@ ocr_apply_report.md で反映結果・未反映理由・差分を確認する
 
 | status | 意味 | `apply-ocr-corrections`での扱い |
 |---|---|---|
-| `approved` | 反映してよいと判断した候補 | **反映対象** |
+| `approved` | 反映してよいと判断した候補 | **反映対象**（ただし`action: delete`は対象外。6.1節参照） |
 | `proposed`（初期値） | まだ判断していない候補 | 反映しない |
 | `rejected` | 反映しないと判断した候補 | 反映しない |
 | `needs_image_check` | 元画像確認が必要と判断した候補 | 反映しない |
+| `needs_source_check` | 元資料（元画像・元テキスト）の確認が必要と判断した候補。推定修正候補・元画像確認必須候補（[`docs/13_ocr_quality_check_workflow.md`](13_ocr_quality_check_workflow.md)7.1節参照）の初期値 | 反映しない |
+| `needs_human_review` | 改善案の妥当性そのものを人間が確認すべき候補。削除候補の初期値 | 反映しない |
 
-`approved`にした候補だけが反映されます。`proposed`のまま放置した候補、`rejected`/`needs_image_check`にした候補は反映されません。
+`approved`にした候補だけが反映されます。それ以外のstatus（`proposed`のまま放置した候補、`rejected`/`needs_image_check`/`needs_source_check`/`needs_human_review`にした候補）は反映されません。
 
 ## 4. 使い方・実行例
 
@@ -68,6 +70,12 @@ python3 -m src.cli apply-ocr-corrections \
 ## 6. 反映方法（置換ルール）
 
 対象field内で`original`と一致する箇所を**すべて**`suggested`に置換します。同じ`original`がfield内に複数回出現する場合も全件を置換し、置換回数を`ocr_apply_report.md`に記録します（1回だけ置換する方式ではなく、全一致置換＋置換回数記録を採用しています）。
+
+### 6.1 削除候補（`action: delete`）は今回は反映しないこと
+
+`ocr-check`が出す候補には、`action`フィールドがあります（`replace`/`delete`/`source_check`。詳細は[`docs/13_ocr_quality_check_workflow.md`](13_ocr_quality_check_workflow.md)7.1節参照）。
+
+このうち**`action: delete`（削除候補）は、`status`を`approved`に変更しても今回のバージョンでは反映されません**（未反映理由: `delete_action_not_supported`）。安全側の設計として、まずは削除候補を人間に提示するところまでとし、自動での本文削除は見送っています。削除する場合は、`output/editable/lesson_pages.json`を人間が直接編集してください。
 
 ## 7. 元ファイルを上書きしないこと
 
@@ -101,6 +109,7 @@ python3 -m src.cli apply-ocr-corrections \
 | `original_not_found` | 対象field内に`original`が見つからない（既に修正済み等） |
 | `duplicate_or_already_applied` | 同一`candidate_id`が重複している |
 | `layout_instruction_skipped` | `layout_instruction`は自動反映対象外 |
+| `delete_action_not_supported` | `action: delete`（削除候補）の反映は今回未対応 |
 
 ## 10. 反映後にllm-handoffへ進む流れ
 
@@ -115,6 +124,7 @@ python3 -m src.cli regenerate --input output/editable/lesson_pages.ocr_fixed.jso
 ## 11. 注意点
 
 - **今回は自動承認しません。** `ocr_correction_candidates.json`の`status`変更は人間が行います。
+- **削除候補（`action: delete`）は`approved`にしても反映されません。** 削除する場合は人間が直接編集してください（将来のバージョンで対応する可能性があります）。
 - 反映後は`ocr_apply_report.md`の「反映された候補一覧」「差分確認用メモ」を必ず確認してください。
 - `source_page_no`/`source_image`/`assets`/`metadata`、ページ数・ページ順は変更されません。
 - 将来的には、候補承認を支援するUIや、ローカルLLMによる承認判断支援へつなげられる可能性があります（今回は未実装。詳細は[`docs/07_api_integration_design.md`](07_api_integration_design.md)参照）。
