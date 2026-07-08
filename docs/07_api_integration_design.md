@@ -1,27 +1,45 @@
-# 07 API連携設計（将来拡張のための設計メモ）
+# 07 将来のローカルLLM活用・API連携設計（将来拡張のための設計メモ）
 
-> 補足: 本メモが想定するAPI/LLM連携は未実装のままです。現状の`restructure`/`generate`モード（[`docs/00_redesign_v2.md`](00_redesign_v2.md)・[`docs/01_requirements.md`](01_requirements.md)参照）は、いずれも外部API・LLMを使わないルールベース実装です。将来これらをLLM連携に置き換える場合、本メモの方針（コアと分離したアダプタ層、`pyproject.toml`の`optional-dependencies`分離等）がそのまま適用できる想定です。
+> 補足: 本メモが想定する自動化連携（ローカルLLM・外部API）はいずれも未実装のままです。現状の`restructure`/`generate`モード（[`docs/00_redesign_v2.md`](00_redesign_v2.md)・[`docs/01_requirements.md`](01_requirements.md)参照）は、外部API・LLM（ローカル/外部いずれも）を使わないルールベース実装です。**プロジェクト方針（README.md「プロジェクト方針：外部API非依存・ローカルLLM移行前提」参照）のとおり、将来的な自動化の中心はローカルLLMの組み込みであり、外部API（OpenAI API/Gamma API/Canva API等）連携は必要になった場合の選択肢にとどめる。** 本メモの方針（コアと分離したアダプタ層、`pyproject.toml`の`optional-dependencies`分離等）は、ローカルLLM・外部APIのどちらを組み込む場合にも共通して適用できる想定である。
 
 ## 目的
-現状はOCR・ブラッシュアップ・Canva設計のいずれも「`prompts/`配下のプロンプトをAIチャットに貼り、人が結果を`pages`JSON（docs/03）にまとめる」手動フローである。将来これらをAPI経由で自動化する場合の設計方針をまとめる。
+現状はOCR・ブラッシュアップ・Canva設計のいずれも「`prompts/`配下のプロンプトをChatGPT/Claude等のAIチャットに貼り、人が結果を`pages`JSON（docs/03）にまとめる」手動フローである。これはサブスク製品と手作業を組み合わせて、まず実用可能な運用を成立させるための現時点の主運用であり、当面はこのまま継続する。
+
+その先の段階として、これらの処理（教材要約・章立て整理・本文ブラッシュアップ・レイアウト指示作成等）を段階的にローカルLLMへ置き換えていく場合の設計方針をまとめる。外部API経由での自動化は、ローカルLLMでは対応が難しい場合の選択肢として位置づける。
 
 本フェーズは設計のみとし、実装は行わない。CLAUDE_RULES.mdの「外部API前提にしない」「有料サービス前提にしない」を維持するため、以下のアダプタは未実装のままとする。
 
 ## 方針
-- `pages`JSON形式（docs/03）を、API連携時も共通のデータ交換フォーマットとして維持する。API出力は必ずこの形式に変換してからCLIに渡す。
-- 外部API呼び出しは`src/`のコア（`models.py`/`parser.py`/`renderer.py`/`canva_renderer.py`）に直接組み込まず、独立した「アダプタ」層として追加する（例: 将来`src/providers/`配下に追加）。コアはJSON入力のみに依存し続け、APIの有無に関わらず動作する。
-- 外部パッケージが必要になった場合は`pyproject.toml`の`optional-dependencies`に分離し（例: `[project.optional-dependencies] api = [...]`）、標準インストールでは不要にする。
-- APIキー等の秘密情報はコードに直書きせず、環境変数または`.gitignore`済みの設定ファイルから読む。
+- `pages`JSON形式（docs/03）を、ローカルLLM連携時・API連携時も共通のデータ交換フォーマットとして維持する。ローカルLLM出力・API出力のいずれも、必ずこの形式に変換してからCLIに渡す。
+- ローカルLLM呼び出し・外部API呼び出しは、いずれも`src/`のコア（`models.py`/`parser.py`/`renderer.py`/`canva_renderer.py`）に直接組み込まず、独立した「アダプタ」層として追加する（例: 将来`src/providers/`配下に追加）。コアはJSON入力のみに依存し続け、ローカルLLM・外部APIの有無に関わらず動作する。
+- 外部パッケージ（ローカルLLMランタイムのクライアントライブラリ・外部APIクライアント等）が必要になった場合は`pyproject.toml`の`optional-dependencies`に分離し（例: `[project.optional-dependencies] llm = [...]`）、標準インストールでは不要にする。
+- APIキー等の秘密情報はコードに直書きせず、環境変数または`.gitignore`済みの設定ファイルから読む（ローカルLLMのみで完結する場合はそもそも秘密情報が不要になる点も、ローカルLLMを優先する理由の一つ）。
 
-## 想定する拡張ポイント
-1. **文字起こしAPI連携**: 画像を渡してOCR/画像読解APIを呼び出し、`prompts/ocr_transcription_prompt.md`と同じ出力（`page_no`/`source_image`/`title`/`lines`/`unreadable_parts`）をJSONで受け取るアダプタ。`unreadable_parts`が空でない場合は自動でpagesに投入せず、人の確認を必須にする。
-2. **ブラッシュアップAPI連携**: `lines`と教材方針を渡し、`summary`・`improvement_points`の下書きを生成するアダプタ。生成結果は必ず人が確認してから`pages`JSONへ反映する（「元教材の意図を無視して文章を大きく改変しない」という方針を維持するため、`lines`自体をAPIが書き換えることはしない）。
-3. **Canva設計API連携**: `lines`・`summary`を渡し、`canva.layout_type`/`main_visual`/`notes`の下書きを生成するアダプタ。最終的な「Canva AI投入用プロンプト」は引き続き`canva_renderer.py`がJSONから自動生成する。
+## 想定する拡張ポイント（ローカルLLMを優先し、外部APIは選択肢として後段に整理）
+
+以下はいずれも、まず**ローカルLLM（例: Ollama等でホストするローカルモデル）を使うアダプタ**を優先して検討し、ローカルLLMでは精度・機能が不足する場合にのみ、外部API（OpenAI API/Claude API/Gemini API等）を使うアダプタを選択肢として検討する。
+
+1. **文字起こし連携**: 画像を渡してOCR/画像読解を行い、`prompts/ocr_transcription_prompt.md`と同じ出力（`page_no`/`source_image`/`title`/`lines`/`unreadable_parts`）をJSONで受け取るアダプタ。`unreadable_parts`が空でない場合は自動でpagesに投入せず、人の確認を必須にする。
+2. **ブラッシュアップ連携**: `lines`と教材方針を渡し、`summary`・`improvement_points`の下書きを生成するアダプタ。生成結果は必ず人が確認してから`pages`JSONへ反映する（「元教材の意図を無視して文章を大きく改変しない」という方針を維持するため、`lines`自体を自動で書き換えることはしない）。
+3. **Canva/Gamma向けレイアウト設計連携**: `lines`・`summary`を渡し、`canva.layout_type`/`main_visual`/`notes`の下書きを生成するアダプタ。最終的な「Canva/Gamma AI投入用プロンプト」は引き続き`canva_renderer.py`がJSONから自動生成する。Canva/Gamma自体への反映（デザイン調整・完成物のレビュー）は当面人が行う。
+
+## 当面ローカルLLM・API連携のいずれにも任せない対象
+
+プロジェクト方針のとおり、以下は当面ローカルLLM・外部APIのいずれにも任せず、人間の確認・手作業を前提とする。
+
+- 教材内容の最終判断
+- 元資料との正確性確認
+- 画像の意味解釈
+- 販売・納品品質の判断
+- Canva / Gamma への最終反映・デザイン調整
+- 完成物のレビュー
 
 ## 段階的な導入方針
-- Phase 3時点: 上記アダプタは未実装。プロンプトを人が手動でAIに投入し、結果を`pages`JSONへ反映する運用を継続する。
-- Phase 4以降: 必要になった時点で、ユーザーの承認を得たうえで`src/providers/`にアダプタを追加する。既存のCLIコマンド体系・データ形式（docs/03）・出力形式（docs/04）は変更しない。
+1. **現在**: `prompts/`配下のプロンプトを人がChatGPT/Claude等のAIチャットに手動で貼り、結果を`pages`JSONへ反映する運用を継続する（サブスク製品＋手作業で運用を成立させる段階）。
+2. **次の段階**: ローカルLLMを学習・検証し、上記「想定する拡張ポイント」の対象からローカルLLMで代替可能なものを段階的に置き換える。既存のCLIコマンド体系・データ形式（docs/03）・出力形式（docs/04）は変更しない。
+3. **必要になった場合のみ**: ローカルLLMでは対応が難しい部分に限り、ユーザーの承認を得たうえで外部API（`src/providers/`配下のアダプタ）を追加することを検討する。外部API化は目的ではなく、必要になった場合の選択肢である。
 
 ## 非対象
-- 特定のAPIベンダー（OCR/LLM等）を前提にした実装は、この設計では確定しない。ベンダー選定はPhase 4着手時に別途相談する。
+- 特定のローカルLLMランタイム・APIベンダーを前提にした実装は、この設計では確定しない。選定は着手時に別途相談する。
 - 有料APIの利用を必須にする変更は行わない。既存の手動フロー（プロンプトをコピーして使う）は今後も動作し続ける。
+- 収益化状況を理由に外部API化を判断することはしない（外部API化の要否は、ローカルLLMで対応できるかどうかで判断する）。

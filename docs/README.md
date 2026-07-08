@@ -11,7 +11,7 @@
 | [`04_output_spec.md`](04_output_spec.md) | **CLI・出力仕様** | 元資料自動取り込み（`import-source`/`build-all`）、OCR前提の事前チェック・`check-ocr`診断・`build-all`のOCR必須モード（`proofread`/`restructure`）がOCR不能時にエラー終了する仕様・`--allow-empty-ocr`（Phase 10.1）、実行ログ（`logs/`）の標準仕様・成功判定の方針（Phase 10.2）、完成output形式選択・editable中間ファイル・再生成（`--output-format`/`regenerate`。Phase 9）、正式output（`editable/`/`canva/`/`exports/`）と後方互換output（`compat/`）の整理（Phase 9.1〜9.2）、`lesson_pages.json`のスキーマ、各派生出力の生成元、restructureプラン・`review-report`のCLI仕様 |
 | [`05_implementation_tasks.md`](05_implementation_tasks.md) | 実装タスク進捗 | Phase 1〜9の完了状況チェックリスト |
 | [`06_claude_code_workflow.md`](06_claude_code_workflow.md) | Claude Code運用手順 | ZIP展開〜実装〜確認までの一般的な進め方 |
-| [`07_api_integration_design.md`](07_api_integration_design.md) | 将来のAPI連携設計メモ | OCR/ブラッシュアップ/Canva設計のAPI化構想（未実装・設計のみ） |
+| [`07_api_integration_design.md`](07_api_integration_design.md) | 将来のローカルLLM活用・API連携設計メモ | OCR/ブラッシュアップ/Canva設計へのローカルLLM組み込み構想（外部API連携は必要になった場合の選択肢。未実装・設計のみ） |
 | [`08_user_acceptance_test.md`](08_user_acceptance_test.md) | **実利用テスト手順（Phase 8〜9・作成者向けの主導線）** | 元資料（画像/PDF/PPTX）の置き方、`build-all`の実行手順・`--output-format`の選び方、`editable/lesson_pages.json`の再生成（`regenerate`）、確認順序、評価観点 |
 | [`09_editable_regenerate_guide.md`](09_editable_regenerate_guide.md) | **editable編集・再生成ガイド（Phase 10）** | `output/editable/lesson_pages.json`の編集してよい項目・編集しない方がよい項目、`regenerate`の具体例、日本語フォント（`--font-path`）の指定方法・トラブルシューティング |
 | [`feedback_template.md`](feedback_template.md) | フィードバックシート（テンプレート） | 実利用テストの結果を記録するチェックリスト。コピーして使う |

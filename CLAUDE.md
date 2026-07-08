@@ -8,7 +8,7 @@
 - `docs/00_redesign_v2.md`（現行の3モード[proofread/restructure/generate]・restructure再構成ロジックの正式な設計書。必ず読むこと）
 - `docs/06_claude_code_workflow.md`
 
-必要に応じて `docs/07_api_integration_design.md`（将来のAPI/LLM連携設計）・`docs/08_user_acceptance_test.md`（Phase 8: 作成者向けの主導線。元資料[画像/PDF/PPTX]を置いて`build-all`を実行する実利用テスト手順）・`docs/99_implementation_review_brief.md`と`docs/99_phase7_review_2026-07-05.md`（レビュー履歴・既知の制約）も確認してください。
+必要に応じて `docs/07_api_integration_design.md`（将来のローカルLLM活用・API連携設計。プロジェクト方針上、優先はローカルLLMで外部API連携は必要になった場合の選択肢）・`docs/08_user_acceptance_test.md`（Phase 8: 作成者向けの主導線。元資料[画像/PDF/PPTX]を置いて`build-all`を実行する実利用テスト手順）・`docs/99_implementation_review_brief.md`と`docs/99_phase7_review_2026-07-05.md`（レビュー履歴・既知の制約）も確認してください。
 
 **作成者向けの主導線は`build-all`コマンドです。** `examples/sample_pages.json`のようなpages形式JSONを直接手作業で作らせる運用は不採用です（開発・テスト用の内部形式として`examples/`に残すのは可）。
 

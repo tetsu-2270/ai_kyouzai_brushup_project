@@ -28,7 +28,7 @@
 
 必要に応じて以下も確認してください（任意機能や将来拡張・実利用テスト・レビュー履歴の背景を把握したい場合）。
 
-- docs/07_api_integration_design.md（将来のAPI/LLM連携の設計メモ。現時点では未実装）
+- docs/07_api_integration_design.md（将来のローカルLLM活用・API連携の設計メモ。プロジェクト方針上、優先はローカルLLMで外部API連携は必要になった場合の選択肢。現時点では未実装）
 - docs/08_user_acceptance_test.md（Phase 8: 作成者向けの主導線。元資料[画像/PDF/PPTX]を置いて`build-all`を実行する実利用テスト手順・評価観点）
 - docs/99_implementation_review_brief.md（Phase 1〜4のレビュー提出用ブリーフ。既知の制約・変更履歴の記録）
 - docs/99_phase7_review_2026-07-05.md（Phase 7完了時点のレビュー・スナップショット）
@@ -60,8 +60,9 @@ CLAUDE_RULES.md の開発ルールに従って、docs/05_implementation_tasks.md
 - テスト結果
 - 次に進めるタスク
 
-可能な範囲で、タスク完了ごとにGitコミットしてください。
-コミットメッセージは日本語でお願いします。
+Git commit / tag / push はあなた（Claude Code）自身では実行しないでください。
+`CLAUDE_RULES.md`「Claude Code運用ルール」6節のとおり、Git保存が必要な場合は
+ユーザー側手動コマンドとして別途提示してください。
 ```
 
 ## エラー時に貼る指示

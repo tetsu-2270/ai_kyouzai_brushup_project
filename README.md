@@ -5,6 +5,20 @@
 ## 目的
 既存教材の画像・テキストを読み取り、学習者に伝わりやすい教材へブラッシュアップする。あわせてCanva等で再現しやすい画像設計書・ページ別レイアウト指示を生成する。
 
+## プロジェクト方針：外部API非依存・ローカルLLM移行前提
+
+本プロジェクトでは、当面はOpenAI API、Gamma API、Canva APIなどの外部API連携を前提にしない。
+
+まずはChatGPT、Claude Code、Canva、Gammaなどの既存サブスク製品と、ローカルツール（このリポジトリのCLI）を組み合わせ、手作業を含めて実用可能な教材ブラッシュアップ運用を作ることを優先する。
+
+ここでいう将来的なLLM活用は、ChatGPTやClaudeの画面操作・コピペ運用を増やすことではなく、**ローカルLLMを学習・検証し、教材ブラッシュアップ処理の一部をプロジェクト内に組み込んでいくこと**を指す。ChatGPT・Claude Code・Canva・Gammaはいずれも製品名として扱い、「LLM」という言葉の総称的な言い換えとしては使わない。
+
+将来的には、ChatGPTに任せようとしていた教材の要約・章立て整理・本文ブラッシュアップ・スライド構成案作成・Canva/Gamma向けレイアウト指示作成等の処理を、段階的にローカルLLMへ置き換える。一方で、教材内容の最終判断・元資料との正確性確認・画像の意味解釈・販売/納品品質の判断・Canva/Gammaへの最終反映やデザイン調整・完成物のレビューは、当面は人が行う前提とする。
+
+外部API化は目的ではなく、ローカルLLMでは対応が難しい場合に検討する将来の選択肢とする。収益化の状況を理由に外部API化を判断することはしない。
+
+詳細な設計方針は[`docs/07_api_integration_design.md`](docs/07_api_integration_design.md)を参照。
+
 ## 想定成果物
 - 完成画像（配布・確認用。教材ページに限らず、チラシ・SNS投稿画像・案内資料等にも対応）
 - PDF/PowerPoint(PPTX)/Word(DOCX)/Markdown形式の完成教材
@@ -111,7 +125,7 @@ python3 -m src.cli lesson-pages --mode generate \
   --output output/lesson_pages.json
 ```
 
-`generate`は外部LLM APIを使わないルールベースの骨子生成（`requirements.json`の`must_include`から1ページずつ、導入ページ・まとめページを加えたたたき台）であり、本文は人が仕上げる前提です。実際の高度な本文生成は、生成された`lesson_pages.json`を人が編集するか、将来のLLM連携で行う想定です。
+`generate`は外部LLM APIを使わないルールベースの骨子生成（`requirements.json`の`must_include`から1ページずつ、導入ページ・まとめページを加えたたたき台）であり、本文は人が仕上げる前提です。実際の高度な本文生成は、生成された`lesson_pages.json`を人が編集するか、将来的にはローカルLLMの組み込みで行う想定です（プロジェクト方針は「プロジェクト方針：外部API非依存・ローカルLLM移行前提」節、設計は[`docs/07_api_integration_design.md`](docs/07_api_integration_design.md)参照）。
 
 `requirements.json`の形式は[`examples/requirements_ai_instagram.json`](examples/requirements_ai_instagram.json)を参照してください（`theme`/`target_audience`/`goal`/`reader_problem`/`promised_value`/`tone`/`page_count`/`output_style`/`must_include`/`must_not_include`）。
 
@@ -150,7 +164,7 @@ python3 -m src.cli lesson-pages --mode restructure \
 }
 ```
 
-なお、現段階の再構成は本文の言い回しまでは作り直さず、統合・分割・導入/実践/まとめの追加という**構造レベルの再構成**にとどまります。本文表現の作り込みは人による編集、または将来のLLM連携を想定しています。
+なお、現段階の再構成は本文の言い回しまでは作り直さず、統合・分割・導入/実践/まとめの追加という**構造レベルの再構成**にとどまります。本文表現の作り込みは人による編集、または将来的にはローカルLLMの組み込みを想定しています。
 
 ### 制作者確認用レポート（`review-report`）
 

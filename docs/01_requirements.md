@@ -106,7 +106,7 @@ AI教材ブラッシュアップシステム
 - PPTXのスライド全体を1枚の画像としてレンダリングする機能（外部レンダラーが必要なため対象外。スライド内の埋め込み画像の保持のみ対応）
 - `.ppt`（PowerPoint旧形式）の取り込み（`.pptx`への変換が必要）
 - Canva API・WordPress投稿の本番疎通（OAuth2/PKCE対応やApplication Passwordでの実サイト確認は未実施。モック付き連携雛形の段階）
-- `restructure`/`generate`における外部LLM連携（現状はルールベースのみ。将来拡張候補として[`docs/00_redesign_v2.md`](00_redesign_v2.md)14節に記載）
+- `restructure`/`generate`におけるLLM連携（現状はルールベースのみ。将来拡張候補として[`docs/00_redesign_v2.md`](00_redesign_v2.md)14節に記載。プロジェクト方針上、優先して検証するのはローカルLLMであり、外部API連携は必要になった場合の選択肢。[`docs/07_api_integration_design.md`](07_api_integration_design.md)参照）
 - `requirements.json`の`page_count`の実反映（現状はバリデーションのみ行い、`restructure`/`generate`のページ数制御には使用しない。将来拡張用のフィールド）
 - introの`source_page_no`拡大・3ページ以上の連鎖merge・`--plan-input`（Phase 7調査で候補に挙がったが未着手。詳細は`docs/05_implementation_tasks.md`Phase 7参照）
 - PPTX exportの高度なレイアウト再現（1ページ=1スライドに完成画像を配置する簡易構成のみ対応。複雑な図形・アニメーション等の再現は対象外）
