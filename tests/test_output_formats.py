@@ -1741,3 +1741,172 @@ def test_llm_handoff_md_includes_ocr_check_guidance(tmp_path, monkeypatch):
 
     text = output_path.read_text(encoding="utf-8")
     assert "ocr-check" in text
+
+
+# --- 承認済みOCR補正候補の反映（apply-ocr-corrections） ----------------------------------
+
+
+def test_apply_ocr_corrections_cli_generates_output_and_report(tmp_path, monkeypatch):
+    """lesson-pages→ocr-check→apply-ocr-correctionsの一連の流れで、補正済みJSONと
+    反映結果レポートの両方が生成されることを確認する（CLIからの実行確認）。"""
+    editable_path = tmp_path / "output" / "editable" / "lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages", "--mode", "generate",
+            "--requirements", "examples/requirements_ai_instagram.json",
+            "--output", str(editable_path),
+        ],
+    )
+    main()
+
+    candidates_path = tmp_path / "output" / "ocr_correction_candidates.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "ocr-check", "--input", str(editable_path),
+            "--output", str(tmp_path / "output" / "ocr_check_report.md"),
+            "--candidates-output", str(candidates_path),
+        ],
+    )
+    main()
+
+    # 手動で1件approvedにする（実データには辞書一致が無いことが多いため）
+    import json
+    candidates_data = json.loads(candidates_path.read_text(encoding="utf-8"))
+    candidates_data["candidates"].append({
+        "candidate_id": "ocr-manual-0001", "page_no": 1, "page_index": 0, "field": "title",
+        "original": "1", "suggested": "１", "severity": "low", "reason": "test",
+        "detection_type": "common_ocr_misread", "source_page_no": [1], "source_image": "",
+        "confidence": "low", "requires_image_check": False, "status": "approved", "human_note": "",
+    })
+    candidates_path.write_text(json.dumps(candidates_data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    output_path = tmp_path / "output" / "editable" / "lesson_pages.ocr_fixed.json"
+    report_path = tmp_path / "output" / "ocr_apply_report.md"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "apply-ocr-corrections",
+            "--input", str(editable_path), "--candidates", str(candidates_path),
+            "--output", str(output_path), "--report", str(report_path),
+        ],
+    )
+    main()
+
+    assert output_path.exists()
+    assert output_path.stat().st_size > 0
+    assert report_path.exists()
+    assert report_path.stat().st_size > 0
+    report_text = report_path.read_text(encoding="utf-8")
+    assert "反映された候補一覧" in report_text or "反映されなかった候補一覧" in report_text
+
+
+def test_apply_ocr_corrections_cli_does_not_overwrite_input(tmp_path, monkeypatch):
+    """--inputで指定した元ファイルが変更されないことを確認する。"""
+    editable_path = tmp_path / "output" / "editable" / "lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages", "--mode", "generate",
+            "--requirements", "examples/requirements_ai_instagram.json",
+            "--output", str(editable_path),
+        ],
+    )
+    main()
+    original_content = editable_path.read_text(encoding="utf-8")
+
+    candidates_path = tmp_path / "output" / "ocr_correction_candidates.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "ocr-check", "--input", str(editable_path),
+            "--candidates-output", str(candidates_path),
+            "--output", str(tmp_path / "output" / "ocr_check_report.md"),
+        ],
+    )
+    main()
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "apply-ocr-corrections",
+            "--input", str(editable_path), "--candidates", str(candidates_path),
+            "--output", str(tmp_path / "output" / "editable" / "lesson_pages.ocr_fixed.json"),
+            "--report", str(tmp_path / "output" / "ocr_apply_report.md"),
+        ],
+    )
+    main()
+
+    assert editable_path.read_text(encoding="utf-8") == original_content
+
+
+def test_apply_ocr_corrections_cli_default_output_paths(tmp_path, monkeypatch):
+    """--output/--reportを省略した場合、既定パスに生成されることを確認する。"""
+    editable_path = tmp_path / "editable_lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages", "--mode", "generate",
+            "--requirements", "examples/requirements_ai_instagram.json",
+            "--output", str(editable_path),
+        ],
+    )
+    main()
+
+    candidates_path = tmp_path / "candidates.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "ocr-check", "--input", str(editable_path), "--candidates-output", str(candidates_path)],
+    )
+    monkeypatch.chdir(tmp_path)
+    main()
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "apply-ocr-corrections", "--input", str(editable_path), "--candidates", str(candidates_path)],
+    )
+    main()
+
+    assert (tmp_path / "output" / "editable" / "lesson_pages.ocr_fixed.json").exists()
+    assert (tmp_path / "output" / "ocr_apply_report.md").exists()
+
+
+def test_apply_ocr_corrections_cli_dry_run_does_not_write_output(tmp_path, monkeypatch):
+    """--dry-runを指定した場合、出力JSONは生成されずレポートのみ生成されることを確認する。"""
+    editable_path = tmp_path / "output" / "editable" / "lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages", "--mode", "generate",
+            "--requirements", "examples/requirements_ai_instagram.json",
+            "--output", str(editable_path),
+        ],
+    )
+    main()
+
+    candidates_path = tmp_path / "output" / "ocr_correction_candidates.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "ocr-check", "--input", str(editable_path),
+            "--candidates-output", str(candidates_path),
+            "--output", str(tmp_path / "output" / "ocr_check_report.md"),
+        ],
+    )
+    main()
+
+    output_path = tmp_path / "output" / "editable" / "lesson_pages.ocr_fixed.json"
+    report_path = tmp_path / "output" / "ocr_apply_report.md"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "apply-ocr-corrections",
+            "--input", str(editable_path), "--candidates", str(candidates_path),
+            "--output", str(output_path), "--report", str(report_path), "--dry-run",
+        ],
+    )
+    main()
+
+    assert not output_path.exists()
+    assert report_path.exists()

@@ -14,6 +14,12 @@ from .import_source import import_source
 from .lesson_pages import LessonDocument, build_lesson_pages, render_review_report, write_lesson_pages_json
 from .edit_plan import render_edit_plan_template_markdown
 from .llm_handoff import render_llm_handoff_markdown
+from .ocr_apply import (
+    apply_ocr_corrections,
+    load_correction_candidates,
+    render_ocr_apply_report_markdown,
+    write_lesson_pages,
+)
 from .ocr_check import (
     build_ocr_correction_candidates,
     render_ocr_check_report_markdown,
@@ -610,6 +616,29 @@ def main() -> None:
         help="補正候補JSONの出力先（既定: output/ocr_correction_candidates.json）",
     )
 
+    apply_ocr_corrections_parser = subparsers.add_parser(
+        "apply-ocr-corrections",
+        help="ocr-checkが生成したocr_correction_candidates.jsonのうち、status: approvedの候補だけを"
+        "lesson_pages.jsonへ反映（元ファイルは上書きしない。自動承認は行わない）",
+    )
+    apply_ocr_corrections_parser.add_argument(
+        "--input", required=True, help="入力lesson_pages.json（editable配下等。上書きしない）"
+    )
+    apply_ocr_corrections_parser.add_argument(
+        "--candidates", required=True, help="ocr-checkが生成したocr_correction_candidates.json"
+    )
+    apply_ocr_corrections_parser.add_argument(
+        "--output",
+        default="output/editable/lesson_pages.ocr_fixed.json",
+        help="補正済みlesson_pages.jsonの出力先（既定: output/editable/lesson_pages.ocr_fixed.json）",
+    )
+    apply_ocr_corrections_parser.add_argument(
+        "--report", default="output/ocr_apply_report.md", help="反映結果レポートの出力先（既定: output/ocr_apply_report.md）"
+    )
+    apply_ocr_corrections_parser.add_argument(
+        "--dry-run", action="store_true", help="出力JSONを生成せず、反映予定の内容だけレポートに出す"
+    )
+
     docx_parser = subparsers.add_parser("docx", help="Word教材(docx)を生成")
     docx_parser.add_argument("--input", required=True, help="入力JSON")
     docx_parser.add_argument("--output", required=True, help="出力docx")
@@ -741,6 +770,34 @@ def main() -> None:
             logger.add_section("OCR_CHECK", candidates_data["summary"])
             logger.record_generated_file(args.candidates_output)
             logger.record_generated_file(args.output)
+        elif args.command == "apply-ocr-corrections":
+            document = load_lesson_document(args.input)
+            candidates_data = load_correction_candidates(args.candidates)
+            result = apply_ocr_corrections(document, candidates_data)
+            if not args.dry_run:
+                write_lesson_pages(args.output, result["document"])
+                validate_generated_file(args.output, "apply-ocr-corrections")
+            write_text(
+                args.report,
+                render_ocr_apply_report_markdown(
+                    result,
+                    candidates_data,
+                    input_path=args.input,
+                    candidates_path=args.candidates,
+                    output_path=args.output,
+                    report_path=args.report,
+                    dry_run=args.dry_run,
+                ),
+            )
+            validate_generated_file(args.report, "apply-ocr-corrections(report)")
+            logger.add_section("INPUT", {"input_path": args.input, "candidates_path": args.candidates, "dry_run": args.dry_run})
+            logger.add_section("OCR_APPLY", {
+                "applied_count": len(result["applied"]),
+                "skipped_count": len(result["skipped"]),
+            })
+            if not args.dry_run:
+                logger.record_generated_file(args.output)
+            logger.record_generated_file(args.report)
         elif args.command == "docx":
             document = load_lesson_document(args.input)
             write_docx(args.output, document)

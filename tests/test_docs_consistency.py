@@ -537,3 +537,30 @@ def test_docs_13_explains_layout_instruction_exclusion():
     text = _read(REPO_ROOT / "docs" / "13_ocr_quality_check_workflow.md")
     assert "layout_instruction" in text
     assert "assets" in text
+
+
+# --- apply-ocr-corrections: 承認済みOCR補正候補の反映ワークフロー -------------------------
+
+
+def test_apply_ocr_corrections_doc_exists_and_is_indexed():
+    guide_path = REPO_ROOT / "docs" / "14_apply_ocr_corrections_workflow.md"
+    assert guide_path.exists()
+    docs_readme_text = _read(REPO_ROOT / "docs" / "README.md")
+    assert "14_apply_ocr_corrections_workflow.md" in docs_readme_text
+
+
+def test_readme_documents_apply_ocr_corrections_command():
+    text = _read(REPO_ROOT / "README.md")
+    assert "apply-ocr-corrections" in text
+
+
+def test_docs_14_explains_approved_status_only():
+    text = _read(REPO_ROOT / "docs" / "14_apply_ocr_corrections_workflow.md")
+    assert "approved" in text
+    assert "proposed" in text
+    assert "rejected" in text
+
+
+def test_docs_14_explains_no_input_overwrite():
+    text = _read(REPO_ROOT / "docs" / "14_apply_ocr_corrections_workflow.md")
+    assert "上書き" in text

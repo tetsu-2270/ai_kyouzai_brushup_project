@@ -15,11 +15,14 @@ examples/
   requirements_ai_instagram.json    # 要件定義サンプル（restructure/generateの--requirements用）
 src/
   cli.py                     # CLI入口。check-ocr / import-source / build-all / regenerate / lesson-pages / review-report /
-                              # generate / canva / ocr-check / llm-handoff / edit-plan-template / docx / pdf /
-                              # scenario / canva-sync / wp-publish の16サブコマンド
+                              # generate / canva / ocr-check / apply-ocr-corrections / llm-handoff /
+                              # edit-plan-template / docx / pdf / scenario / canva-sync / wp-publish の17サブコマンド
   ocr_check.py                 # lesson_pages.jsonのOCR品質（誤認識・文字化け・不自然な表記）を検出し、
                               # レポート(ocr_check_report.md)と補正候補JSON(ocr_correction_candidates.json)を
                               # 生成。自動修正・自動反映は行わない（詳細はdocs/13参照）
+  ocr_apply.py                  # ocr_correction_candidates.jsonのうちstatus: approvedの候補だけを
+                              # lesson_pages.jsonへ反映。元ファイルは上書きしない・自動承認はしない
+                              # （詳細はdocs/14参照）
   llm_handoff.py               # editable/lesson_pages.jsonから、ChatGPT/Claude等へ手作業で貼り付けるための
                               # Markdownを生成（LLM出力の自動取り込みは行わない。詳細はdocs/11参照）
   edit_plan.py                 # LLM改善案の採用判断シート（edit_plan_template.md）を生成。LLM回答を
