@@ -529,3 +529,11 @@ def test_docs_13_lists_common_ocr_misread_examples():
     text = _read(REPO_ROOT / "docs" / "13_ocr_quality_check_workflow.md")
     assert "一買" in text
     assert "一貫" in text
+
+
+def test_docs_13_explains_layout_instruction_exclusion():
+    """layout_instructionが辞書一致のみに限定され、内部語句が過検出されない旨が
+    docs/13に明記されていることを確認する。"""
+    text = _read(REPO_ROOT / "docs" / "13_ocr_quality_check_workflow.md")
+    assert "layout_instruction" in text
+    assert "assets" in text

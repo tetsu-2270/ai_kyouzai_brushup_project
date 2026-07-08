@@ -14,23 +14,29 @@ from .lesson_pages import LessonDocument, LessonPage
 # （将来のapply-ocr-corrections相当の機能に備え、補正候補は構造化JSONとして出力する）。
 # 詳細はdocs/13_ocr_quality_check_workflow.md参照。
 
-_SCAN_FIELDS = ("title", "summary", "body", "notes", "layout_instruction")
+# 全検出器を適用するフィールド（OCR本文として扱う）。
+_FULL_SCAN_FIELDS = ("title", "summary", "body", "notes")
+# layout_instructionはレイアウト指示・内部参照（assets/page等）が入ることがあり、OCR本文
+# ではないため、辞書一致（common_ocr_misread）のみ適用する（garbled_latin等の対象外にする）。
+_DICTIONARY_ONLY_SCAN_FIELDS = ("layout_instruction",)
 
 _SEVERITY_LABELS = {"high": "高", "medium": "中", "low": "低"}
 
 # --- 1. よくあるOCR誤認識辞書（検出のみ・自動置換はしない） ------------------------------
 
+# 各エントリは(修正候補, 重要度)。「1 つ」→「1つ」のように内容を損なわない軽微な誤認識は
+# severityを下げられるよう、辞書全体を一律severityにしない。
 _OCR_MISREAD_DICTIONARY = {
-    "一買": "一貫",
-    "アウトブット": "アウトプット",
-    "右労": "苦労",
-    "革細": "些細",
-    "実貴": "実践",
-    "共通説識": "共通認識",
-    "人帳面": "几帳面",
-    "叱嘘激励": "叱咤激励",
-    "全1 1問": "全11問",
-    "1 つ": "1つ",
+    "一買": ("一貫", "high"),
+    "アウトブット": ("アウトプット", "high"),
+    "右労": ("苦労", "high"),
+    "革細": ("些細", "high"),
+    "実貴": ("実践", "high"),
+    "共通説識": ("共通認識", "high"),
+    "人帳面": ("几帳面", "high"),
+    "叱嘘激励": ("叱咤激励", "high"),
+    "全1 1問": ("全11問", "high"),
+    "1 つ": ("1つ", "low"),
 }
 
 
@@ -42,12 +48,12 @@ def detect_common_ocr_misreads(text: str) -> list[dict[str, Any]]:
     if not text:
         return []
     candidates = []
-    for wrong, correct in _OCR_MISREAD_DICTIONARY.items():
+    for wrong, (correct, severity) in _OCR_MISREAD_DICTIONARY.items():
         if wrong in text:
             candidates.append({
                 "original": wrong,
                 "suggested": correct,
-                "severity": "high",
+                "severity": severity,
                 "reason": f"OCR誤認識辞書に一致します（{wrong} → {correct}）",
                 "detection_type": "common_ocr_misread",
                 "requires_image_check": False,
@@ -61,9 +67,12 @@ _LATIN_RUN_RE = re.compile(r"[A-Za-z]+(?:[ \t]+[A-Za-z]+)*")
 
 _LATIN_ALLOWLIST = {
     "url", "sns", "instagram", "canva", "gamma", "chatgpt", "claude",
-    "pdf", "docx", "pptx", "png", "jpg", "jpeg", "csv", "json", "html",
+    "pdf", "docx", "pptx", "png", "jpg", "jpeg", "webp", "csv", "json", "html", "md",
     "ai", "llm", "ocr", "ok", "ng", "id", "web", "seo", "qr", "pc",
     "youtube", "line", "wifi", "wi-fi", "no", "cm", "kg", "app",
+    # システム内部の参照語・レイアウト指示由来の語句（OCR崩れではないため許可語として扱う）
+    "assets", "page", "image", "images", "source_image", "source_assets",
+    "rendered", "output", "input", "editable", "layout", "instruction",
 }
 
 
@@ -105,6 +114,9 @@ _UNUSUAL_SYMBOL_PATTERNS = (
     re.compile(r"\\{1,}"),
     re.compile(r"[|｜]{2,}"),
     re.compile(r"[!-/:-@\[-`{-~]{4,}"),
+    # 半角括弧で始まり全角括弧で終わる（またはその逆）、崩れた括弧の組み合わせ
+    re.compile(r"[\[(][^\]\)\[(【「『]{0,20}[】」』]"),
+    re.compile(r"[【「『][^【「『\]\)]{0,20}[\])]"),
 )
 
 
@@ -126,6 +138,33 @@ def detect_unusual_symbols(text: str) -> list[dict[str, Any]]:
     return candidates
 
 
+# --- タイトル専用の検出（短い記号混じり・特殊記号の混入等） -------------------------------
+
+_TITLE_STRAY_SYMBOL_RE = re.compile(r"[|｜°@]")
+
+
+def detect_title_anomalies(title: str) -> list[dict[str, Any]]:
+    """タイトル特有の崩れ（`|`/`°`/`@`等の不自然な記号混入）を検出する。
+
+    英字列・辞書一致・括弧崩れは他の検出器（`detect_garbled_latin_sequences`/
+    `detect_common_ocr_misreads`/`detect_unusual_symbols`）がtitleにも適用されるため、
+    ここでは他の検出器がカバーしない記号混入のみを扱う。
+    """
+    if not title:
+        return []
+    candidates = []
+    if _TITLE_STRAY_SYMBOL_RE.search(title):
+        candidates.append({
+            "original": title,
+            "suggested": None,
+            "severity": "medium",
+            "reason": "タイトルに不自然な記号が含まれている可能性があります",
+            "detection_type": "unusual_symbol",
+            "requires_image_check": True,
+        })
+    return candidates
+
+
 # --- 4. 文が途中で切れていそうな箇所 ------------------------------------------------------
 
 _INCOMPLETE_ENDINGS = (
@@ -137,28 +176,31 @@ _SENTENCE_END_CHARS = "。！？」』）.!?"
 def detect_incomplete_sentences(text: str) -> list[dict[str, Any]]:
     """文末が助詞・接続詞で終わっている等、文が途中で切れている可能性がある行を検出する。
 
-    過検出してもよい前提のため、句点等で終わっていない行のうち、典型的な未完パターンに
-    一致するものを候補として出す。
+    行単位ではなく、フィールド末尾（最後の非空行）だけを判定対象にする。次に続く行がある
+    場合は「文が途中で切れている」のではなく単に改行を挟んで文が続いているだけのことが多い
+    ため（例:「〜ので\nミュートを解除してください」）、誤検出を避けるためフィールドの
+    最後の行のみを見る。過検出してもよい前提のため、それでも典型的な未完パターンに一致する
+    ものは候補として出す。
     """
     if not text:
         return []
-    candidates = []
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped[-1] in _SENTENCE_END_CHARS:
-            continue
-        for ending in _INCOMPLETE_ENDINGS:
-            if stripped.endswith(ending):
-                candidates.append({
-                    "original": stripped,
-                    "suggested": None,
-                    "severity": "high",
-                    "reason": "文が途中で切れている可能性があります",
-                    "detection_type": "incomplete_sentence",
-                    "requires_image_check": True,
-                })
-                break
-    return candidates
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return []
+    last_line = lines[-1]
+    if last_line[-1] in _SENTENCE_END_CHARS:
+        return []
+    for ending in _INCOMPLETE_ENDINGS:
+        if last_line.endswith(ending):
+            return [{
+                "original": last_line,
+                "suggested": None,
+                "severity": "high",
+                "reason": "文が途中で切れている可能性があります",
+                "detection_type": "incomplete_sentence",
+                "requires_image_check": True,
+            }]
+    return []
 
 
 # --- 5. 数字と日本語の間の不自然な空白（日本語として不自然な箇所の一種） ----------------------
@@ -167,19 +209,60 @@ _NUMBER_JAPANESE_SPACING_RE = re.compile(
     r"(?:(?<=[ぁ-んァ-ヶ一-龯])[ 　]+(?=[0-9])|(?<=[0-9])[ 　]+(?=[ぁ-んァ-ヶ一-龯]))"
 )
 
+# 「9ま1よう」のように、数字と短いかな・カタカナが2回以上タイトに交互する並び。
+# 「3人」「5月」のような通常の数え方は1回の交互出現に留まるため誤検出しにくい。
+_GARBLED_NUMBER_KANA_RE = re.compile(r"(?:[0-9]+[ぁ-んァ-ヶ]{1,3}){2,}[0-9]*")
+
+# 「7 / 1」のような日付・分数風の表記。誤って断定的に修正しないよう元画像確認候補にする。
+_DATE_LIKE_RE = re.compile(r"[0-9]{1,4}[ 　]*/[ 　]*[0-9]{1,4}")
+
+
+def _matches_dictionary_entry(snippet: str) -> bool:
+    return any(key in snippet for key in _OCR_MISREAD_DICTIONARY)
+
 
 def detect_suspicious_tokens(text: str) -> list[dict[str, Any]]:
-    """数字と日本語の間の不自然な空白など、ルールベースで検出できる範囲の不自然な表記を検出する。
+    """数字と日本語が絡む不自然な表記を、ルールベースでできる範囲で検出する。
+
+    - 数字とかな・カタカナがタイトに交互する並び（OCR崩れの可能性が高い）
+    - 日付・分数のような数字/数字表記（誤修正を避けるため元画像確認候補にする）
+    - 数字と日本語の間の単純な空白（軽微な表記ゆれ。辞書一致箇所とは重複させない）
 
     完全な自然言語判定は行わない（ルールベースでできる範囲にとどめる）。
     """
     if not text:
         return []
     candidates = []
+
+    for match in _GARBLED_NUMBER_KANA_RE.finditer(text):
+        span = match.group(0)
+        if _matches_dictionary_entry(span):
+            continue
+        candidates.append({
+            "original": span,
+            "suggested": None,
+            "severity": "medium",
+            "reason": "数字と日本語が不自然に混在しており、OCR崩れの可能性があります",
+            "detection_type": "spacing",
+            "requires_image_check": True,
+        })
+
+    for match in _DATE_LIKE_RE.finditer(text):
+        candidates.append({
+            "original": match.group(0),
+            "suggested": None,
+            "severity": "medium",
+            "reason": "日付や数値表記の可能性があり、誤修正を避けるため元画像で確認してください",
+            "detection_type": "spacing",
+            "requires_image_check": True,
+        })
+
     for match in _NUMBER_JAPANESE_SPACING_RE.finditer(text):
         start = max(0, match.start() - 5)
         end = min(len(text), match.end() + 5)
         snippet = text[start:end].strip()
+        if _matches_dictionary_entry(snippet):
+            continue
         candidates.append({
             "original": snippet,
             "suggested": None,
@@ -201,9 +284,15 @@ _DETECTORS = (
 
 
 def analyze_page_ocr_quality(page: LessonPage) -> list[dict[str, Any]]:
-    """ページ1件分のOCR品質を検出する。フィールドごとに全検出器を適用する。"""
+    """ページ1件分のOCR品質を検出する。
+
+    `title`/`summary`/`body`/`notes`にはOCR本文として全検出器を適用する。`layout_instruction`は
+    レイアウト指示・内部参照（`assets`/`page`等）が入ることがありOCR本文ではないため、
+    辞書一致（`detect_common_ocr_misreads`）のみを適用する。`title`にはさらに、他の検出器が
+    カバーしない記号混入を`detect_title_anomalies`で追加検出する。
+    """
     candidates = []
-    for field in _SCAN_FIELDS:
+    for field in _FULL_SCAN_FIELDS:
         text = getattr(page, field, "") or ""
         if not text:
             continue
@@ -212,6 +301,20 @@ def analyze_page_ocr_quality(page: LessonPage) -> list[dict[str, Any]]:
                 raw = dict(raw)
                 raw["field"] = field
                 candidates.append(raw)
+        if field == "title":
+            for raw in detect_title_anomalies(text):
+                raw = dict(raw)
+                raw["field"] = field
+                candidates.append(raw)
+
+    for field in _DICTIONARY_ONLY_SCAN_FIELDS:
+        text = getattr(page, field, "") or ""
+        if not text:
+            continue
+        for raw in detect_common_ocr_misreads(text):
+            raw = dict(raw)
+            raw["field"] = field
+            candidates.append(raw)
     return candidates
 
 
@@ -310,9 +413,22 @@ def _format_usage_section() -> str:
     )
 
 
+def _pages_requiring_image_check(candidates: list[dict[str, Any]]) -> set[int]:
+    """元画像確認が必要そうなページ番号の集合を返す。
+
+    layout_instruction由来の候補（辞書一致のみ・requires_image_check=False）は対象にならない
+    が、将来の検出器追加に備えて明示的にfieldでも除外しておく。
+    """
+    return {
+        c["page_no"]
+        for c in candidates
+        if c.get("requires_image_check") and c["field"] != "layout_instruction"
+    }
+
+
 def _format_overall_summary_section(document: LessonDocument, candidates: list[dict[str, Any]], candidates_output: str) -> str:
     pages_with_candidates = {c["page_no"] for c in candidates}
-    pages_requiring_image_check = {c["page_no"] for c in candidates if c.get("requires_image_check")}
+    pages_requiring_image_check = _pages_requiring_image_check(candidates)
     by_type: dict[str, int] = {}
     for c in candidates:
         by_type[c["detection_type"]] = by_type.get(c["detection_type"], 0) + 1
@@ -354,10 +470,16 @@ def _format_detection_summary_section(candidates: list[dict[str, Any]]) -> str:
     lines = ["## 4. システム検出結果サマリー", ""]
     if not candidates:
         lines.append("検出された候補はありませんでした。")
-        return "\n".join(lines)
-    for detection_type, count in sorted(by_type.items(), key=lambda kv: -kv[1]):
-        label = type_labels.get(detection_type, detection_type)
-        lines.append(f"- {label}（`{detection_type}`）: {count}件")
+    else:
+        for detection_type, count in sorted(by_type.items(), key=lambda kv: -kv[1]):
+            label = type_labels.get(detection_type, detection_type)
+            lines.append(f"- {label}（`{detection_type}`）: {count}件")
+    lines.append("")
+    lines.append(
+        "`layout_instruction`はレイアウト指示・内部参照（`assets`/`page`等）が含まれるため、"
+        "OCR崩れ候補の主対象からは除外し、辞書一致（8節）のみ確認しています。"
+        "まずは高重要度の候補（5節）から確認することをおすすめします。"
+    )
     return "\n".join(lines)
 
 
