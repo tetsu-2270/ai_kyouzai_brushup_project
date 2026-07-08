@@ -251,9 +251,15 @@ def _format_pages_section(
 def _format_notes_section() -> str:
     return (
         "## 7. 注意事項\n\n"
-        "- このファイルはLLMへの出力を自動で取り込みません。LLMの回答を見ながら、"
-        "人間が`output/editable/lesson_pages.json`を直接編集してください。\n"
-        "- 編集後は`regenerate`コマンドで完成outputを作り直してください。\n"
+        "- このファイルはLLMへの出力を自動で取り込みません。LLMの回答をそのまま"
+        "`output/editable/lesson_pages.json`へ反映せず、まず`edit_plan_template.md`に採用判断を"
+        "整理してください。\n\n"
+        "  ```bash\n"
+        "  python3 -m src.cli edit-plan-template --input output/editable/lesson_pages.json "
+        "--output output/edit_plan_template.md\n"
+        "  ```\n\n"
+        "  その後、採用する内容だけを人間が`output/editable/lesson_pages.json`に反映し、"
+        "`regenerate`で再出力してください（詳細は`docs/12_llm_review_apply_workflow.md`参照）。\n"
         "- `source_page_no`/`source_image`/`assets`は元資料との対応関係を示す内部情報です。"
         "書き換えると元資料とのつながりが分からなくなるため、通常は編集しないでください。\n"
         "- 本文が長いページも省略せずに出力しています。分量が多い場合は、"

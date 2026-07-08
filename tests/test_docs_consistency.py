@@ -473,3 +473,31 @@ def test_readme_llm_handoff_section_does_not_hardcode_age_group():
     llm_handoff_section = text.split("### LLM手作業投入用ファイルを生成")[1].split("###")[0]
     assert "50〜60代" not in llm_handoff_section
     assert "60代" not in llm_handoff_section
+
+
+# --- edit-plan-template: LLM回答の採用判断・反映ワークフロー -----------------------------
+
+
+def test_llm_review_apply_workflow_doc_exists_and_is_indexed():
+    """docs/12_llm_review_apply_workflow.mdが存在し、docs/README.mdから参照されていることを確認する。"""
+    guide_path = REPO_ROOT / "docs" / "12_llm_review_apply_workflow.md"
+    assert guide_path.exists()
+    docs_readme_text = _read(REPO_ROOT / "docs" / "README.md")
+    assert "12_llm_review_apply_workflow.md" in docs_readme_text
+
+
+def test_readme_documents_edit_plan_template_command():
+    text = _read(REPO_ROOT / "README.md")
+    assert "edit-plan-template" in text
+
+
+def test_docs_12_explains_why_llm_output_is_not_applied_directly():
+    text = _read(REPO_ROOT / "docs" / "12_llm_review_apply_workflow.md")
+    assert "そのまま" in text
+    assert "自動" in text
+
+
+def test_docs_12_includes_regenerate_checklist():
+    text = _read(REPO_ROOT / "docs" / "12_llm_review_apply_workflow.md")
+    assert "チェックリスト" in text
+    assert "regenerate" in text

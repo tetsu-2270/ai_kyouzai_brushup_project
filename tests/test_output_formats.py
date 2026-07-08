@@ -1556,3 +1556,79 @@ def test_llm_handoff_cli_default_output_path(tmp_path, monkeypatch):
     main()
 
     assert (tmp_path / "output" / "llm_handoff.md").exists()
+
+
+# --- LLM回答後の手作業フロー：採用判断シート（edit-plan-template） -----------------------
+
+
+def test_edit_plan_template_cli_generates_markdown_from_editable_lesson_pages(tmp_path, monkeypatch):
+    """build-all/lesson-pagesで作ったeditable/lesson_pages.jsonから、edit-plan-templateコマンドで
+    edit_plan_template.mdが生成されることを確認する（CLIからの実行確認）。"""
+    editable_path = tmp_path / "output" / "editable" / "lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages", "--mode", "generate",
+            "--requirements", "examples/requirements_ai_instagram.json",
+            "--output", str(editable_path),
+        ],
+    )
+    main()
+
+    output_path = tmp_path / "output" / "edit_plan_template.md"
+    monkeypatch.setattr(
+        "sys.argv", ["cli", "edit-plan-template", "--input", str(editable_path), "--output", str(output_path)]
+    )
+    main()
+
+    assert output_path.exists()
+    assert output_path.stat().st_size > 0
+    text = output_path.read_text(encoding="utf-8")
+    assert "採用判断" in text
+    assert "### Page 1" in text
+
+
+def test_edit_plan_template_cli_default_output_path(tmp_path, monkeypatch):
+    """--outputを省略した場合、output/edit_plan_template.md（カレントディレクトリ基準）に
+    生成されることを確認する。"""
+    editable_path = tmp_path / "editable_lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages", "--mode", "generate",
+            "--requirements", "examples/requirements_ai_instagram.json",
+            "--output", str(editable_path),
+        ],
+    )
+    main()
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["cli", "edit-plan-template", "--input", str(editable_path)])
+    main()
+
+    assert (tmp_path / "output" / "edit_plan_template.md").exists()
+
+
+def test_llm_handoff_md_includes_guidance_to_use_edit_plan_template(tmp_path, monkeypatch):
+    """llm_handoff.mdの注意事項に、LLM回答後はedit-plan-templateで採用判断を整理する案内が
+    含まれることを確認する。"""
+    editable_path = tmp_path / "output" / "editable" / "lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages", "--mode", "generate",
+            "--requirements", "examples/requirements_ai_instagram.json",
+            "--output", str(editable_path),
+        ],
+    )
+    main()
+
+    output_path = tmp_path / "output" / "llm_handoff.md"
+    monkeypatch.setattr(
+        "sys.argv", ["cli", "llm-handoff", "--input", str(editable_path), "--output", str(output_path)]
+    )
+    main()
+
+    text = output_path.read_text(encoding="utf-8")
+    assert "edit-plan-template" in text
+    assert "edit_plan_template.md" in text
