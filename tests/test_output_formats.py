@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 from PIL import Image
@@ -1313,3 +1314,194 @@ def test_build_all_failure_log_still_contains_ocr_details_despite_quiet_stderr(t
     assert "tesseract_available: False" in text
     assert "mode=proofread requires OCR text" in text
     assert "exit_code: 1" in text
+
+
+# --- Phase 10.2追加修正: renderedディレクトリ空でも正常終了になる問題の修正 -------------
+
+
+def test_build_all_fails_when_stale_rendered_files_exist_but_none_generated_this_run(tmp_path, monkeypatch):
+    """output/rendered/に前回実行の古い画像ファイルが残っている状態で、今回の実行が
+    画像を1枚も生成しなかった場合、非ゼロ終了になることを確認する（ディレクトリの
+    非空判定だけでは検知できない、今回実行時点でのレンダリング失敗を検知するための回帰テスト）。"""
+    import src.cli as cli_module
+
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir, count=1)
+    output_dir = tmp_path / "output"
+
+    # 前回実行の古い画像ファイルをあらかじめ用意しておく。
+    stale_dir = output_dir / "rendered"
+    stale_dir.mkdir(parents=True, exist_ok=True)
+    (stale_dir / "page_001.png").write_bytes(b"stale image from a previous run")
+
+    # 今回の実行ではrender_document_images()が1枚も生成しなかった状況を再現する。
+    monkeypatch.setattr(cli_module, "render_document_images", lambda *args, **kwargs: [])
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "build-all", "--input", str(source_dir), "--mode", "proofread", "--output-dir", str(output_dir)],
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 1
+
+
+def test_build_all_fails_when_rendered_image_is_zero_bytes(tmp_path, monkeypatch):
+    """render_document_images()が返したパスの画像がサイズ0の場合、非ゼロ終了になることを確認する。"""
+    import src.cli as cli_module
+
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir, count=1)
+    output_dir = tmp_path / "output"
+
+    def _fake_render(document, out_dir, rendered_dir, font_path=None):
+        rendered_dir = Path(rendered_dir)
+        rendered_dir.mkdir(parents=True, exist_ok=True)
+        zero_path = rendered_dir / "page_001.png"
+        zero_path.write_bytes(b"")
+        return [zero_path]
+
+    monkeypatch.setattr(cli_module, "render_document_images", _fake_render)
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "build-all", "--input", str(source_dir), "--mode", "proofread", "--output-dir", str(output_dir)],
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 1
+
+
+def test_build_all_fails_when_rendered_count_does_not_match_page_count(tmp_path, monkeypatch):
+    """render_document_images()が返した画像数がページ数と一致しない場合、非ゼロ終了になることを
+    確認する。"""
+    import src.cli as cli_module
+
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir, count=3)
+    output_dir = tmp_path / "output"
+
+    def _fake_render(document, out_dir, rendered_dir, font_path=None):
+        rendered_dir = Path(rendered_dir)
+        rendered_dir.mkdir(parents=True, exist_ok=True)
+        only_one = rendered_dir / "page_001.png"
+        only_one.write_bytes(b"only one image, but there are 3 pages")
+        return [only_one]
+
+    monkeypatch.setattr(cli_module, "render_document_images", _fake_render)
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "build-all", "--input", str(source_dir), "--mode", "proofread", "--output-dir", str(output_dir)],
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 1
+
+
+def test_build_all_image_input_same_format_generates_rendered_images_successfully(tmp_path, monkeypatch):
+    """画像input + --output-format same（既定）で、rendered画像が実際に生成されることを
+    確認する（正常系が壊れていないことの確認）。"""
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir, count=3)
+    output_dir = tmp_path / "output"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "build-all", "--input", str(source_dir), "--mode", "proofread", "--output-dir", str(output_dir)],
+    )
+    main()
+
+    rendered_files = sorted((output_dir / "rendered").glob("*.png"))
+    assert len(rendered_files) == 3
+    for f in rendered_files:
+        assert f.stat().st_size > 0
+
+
+def test_build_all_output_format_image_generates_rendered_images_successfully(tmp_path, monkeypatch):
+    """--output-format imageで、rendered画像が1枚以上生成されることを確認する。"""
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir, count=2)
+    output_dir = tmp_path / "output"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "build-all", "--input", str(source_dir), "--mode", "proofread",
+            "--output-dir", str(output_dir), "--output-format", "image",
+        ],
+    )
+    main()
+
+    rendered_files = sorted((output_dir / "rendered").glob("*.png"))
+    assert len(rendered_files) == 2
+
+
+def test_build_all_output_format_all_validates_rendered_images(tmp_path, monkeypatch):
+    """--output-format allでも、rendered画像が検証対象になり、正しく生成されることを確認する。"""
+    import src.cli as cli_module
+
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir, count=2)
+    output_dir = tmp_path / "output"
+
+    # allの中でrenderedだけ空振りするケースをシミュレートし、検証されることを確認する。
+    monkeypatch.setattr(cli_module, "render_document_images", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "build-all", "--input", str(source_dir), "--mode", "proofread",
+            "--output-dir", str(output_dir), "--output-format", "all",
+        ],
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 1
+
+
+def test_build_all_logs_rendered_files_count_not_just_directory(tmp_path, monkeypatch):
+    """ログのgenerated_files/RENDERED_IMAGESセクションに、ディレクトリ名だけでなく
+    実ファイルパスまたは生成枚数が記録されることを確認する。"""
+    import os
+
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir, count=3)
+    output_dir = tmp_path / "output"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "build-all", "--input", str(source_dir), "--mode", "proofread", "--output-dir", str(output_dir)],
+    )
+    main()
+
+    log_files = list(Path(os.environ["AI_KYOUZAI_LOGS_DIR"]).glob("*_build-all.log"))
+    assert len(log_files) == 1
+    text = log_files[0].read_text(encoding="utf-8")
+    assert "rendered_files_count: 3" in text
+    assert "page_001.png" in text
+
+
+def test_regenerate_fails_when_rendered_images_not_actually_generated(tmp_path, monkeypatch):
+    """regenerateでも、rendered画像の検証がstale-file問題を回避することを確認する。"""
+    import src.cli as cli_module
+
+    editable_path = tmp_path / "output" / "editable" / "lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages", "--mode", "generate",
+            "--requirements", "examples/requirements_ai_instagram.json",
+            "--output", str(editable_path),
+        ],
+    )
+    main()
+
+    output_dir = editable_path.parent.parent
+    stale_dir = output_dir / "rendered"
+    stale_dir.mkdir(parents=True, exist_ok=True)
+    (stale_dir / "page_001.png").write_bytes(b"stale image from a previous run")
+
+    monkeypatch.setattr(cli_module, "render_document_images", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        "sys.argv", ["cli", "regenerate", "--input", str(editable_path), "--output-format", "image"]
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 1

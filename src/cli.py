@@ -110,12 +110,14 @@ def validate_generated_json_pages(path: str | Path, pages_count: int, label: str
 
 
 def _expected_output_paths(output_dir: Path, resolved_format: str) -> list[Path]:
-    """指定されたoutput-formatについて、生成されているべき成果物パスの一覧を返す
+    """指定されたoutput-formatについて、生成されているべき成果物パス（画像を除く）の一覧を返す
     （`_verify_expected_outputs()`が「指定した形式の成果物が実際に生成されたか」を検証するのに使う）。
+    画像（`rendered/`）は`render_document_images()`が返す実ファイルパスの一覧で別途検証するため、
+    ここには含めない（Phase 10.2追加修正: ディレクトリの存在だけで「画像あり」とみなさないため）。
     「json」はeditable中間ファイル自体が対象であり、別工程で既に生成されているためここでは対象外。
     """
     mapping: dict[str, list[Path]] = {
-        "image": [output_dir / "rendered"],
+        "image": [],
         "pdf": [output_dir / "exports" / f"{_EXPORT_BASENAME}.pdf"],
         "pptx": [output_dir / "exports" / f"{_EXPORT_BASENAME}.pptx"],
         "docx": [output_dir / "exports" / f"{_EXPORT_BASENAME}.docx"],
@@ -131,18 +133,51 @@ def _expected_output_paths(output_dir: Path, resolved_format: str) -> list[Path]
     return mapping.get(resolved_format, [])
 
 
-def _verify_expected_outputs(output_dir: Path, resolved_format: str) -> None:
+def _verify_expected_images(
+    resolved_format: str, expected_page_count: int, image_paths: list[Path]
+) -> None:
+    """画像output（`rendered/page_NNN.png`）が期待される場合に、実際に生成された画像ファイルの
+    パス一覧（`render_document_images()`の戻り値）を検証する。
+
+    `output/rendered/`ディレクトリの存在や非空判定だけでは、前回実行時の古い画像ファイルが
+    残っているだけでも「成功」とみなしてしまう（今回実行で1枚も生成されていなくても検知できない）
+    ため、今回の実行が実際に書き出したファイルパスそのものを検証する（Phase 10.2追加修正）。
+    """
+    if resolved_format not in ("image", "pptx", "all"):
+        return
+    # pptx単体はrendered/自体を正式outputとして公開しないため、画像0枚は許容しない対象外とする
+    # （PPTXがrendered画像を内部的に使うのはimage_paths経由であり、rendered/への露出義務は無い）。
+    if resolved_format == "pptx":
+        return
+
+    if not image_paths:
+        raise ValueError(
+            "画像output(rendered/)が生成されませんでした（imported_pages/pagesは存在します）。"
+        )
+    if expected_page_count and len(image_paths) != expected_page_count:
+        raise ValueError(
+            f"画像output(rendered/)の生成数がページ数と一致しません: "
+            f"期待{expected_page_count}枚に対し{len(image_paths)}枚しか確認できませんでした。"
+        )
+    invalid = [str(p) for p in image_paths if not Path(p).exists() or Path(p).stat().st_size == 0]
+    if invalid:
+        raise ValueError(f"画像output(rendered/)に生成されていない、または空のファイルがあります: {', '.join(invalid)}")
+
+
+def _verify_expected_outputs(
+    output_dir: Path, resolved_format: str, expected_page_count: int = 0, image_paths: list[Path] | None = None
+) -> None:
     """`_generate_formatted_outputs()`実行後、指定したoutput-formatの成果物が実際に
     生成されている（かつ空でない）かを検証する。生成されていない場合は「exit 0だが成果物が無い」
     という実質失敗を防ぐため、ValueError（呼び出し元でexit 1になる）を送出する。
     """
-    missing: list[str] = []
-    for path in _expected_output_paths(output_dir, resolved_format):
-        if path.name == "rendered":
-            if not path.is_dir() or not any(path.iterdir()):
-                missing.append(str(path))
-        elif not path.exists() or path.stat().st_size == 0:
-            missing.append(str(path))
+    _verify_expected_images(resolved_format, expected_page_count, image_paths or [])
+
+    missing = [
+        str(path)
+        for path in _expected_output_paths(output_dir, resolved_format)
+        if not path.exists() or path.stat().st_size == 0
+    ]
     if missing:
         raise ValueError(
             f"指定されたoutput-format({resolved_format})の成果物が生成されませんでした: {', '.join(missing)}"
@@ -180,9 +215,18 @@ def _generate_formatted_outputs(
     if resolved_format in ("canva", "all"):
         write_text(output_dir / "canva" / "canva_design.md", render_canva_design(document))
 
-    _verify_expected_outputs(output_dir, resolved_format)
+    _verify_expected_outputs(
+        output_dir, resolved_format, expected_page_count=len(document.pages), image_paths=image_paths
+    )
 
     if logger:
+        if needs_images and resolved_format != "pptx":
+            _PREVIEW_COUNT = 5
+            for path in image_paths[:_PREVIEW_COUNT]:
+                logger.record_generated_file(path)
+            if len(image_paths) > _PREVIEW_COUNT:
+                logger.record_generated_file(f"... ({len(image_paths)} files total)")
+            logger.add_section("RENDERED_IMAGES", {"rendered_files_count": len(image_paths)})
         for path in _expected_output_paths(output_dir, resolved_format):
             logger.record_generated_file(path)
 
