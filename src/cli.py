@@ -12,6 +12,7 @@ from .execution_logger import ExecutionLogger, TeeStderr
 from .image_renderer import render_document_images
 from .import_source import import_source
 from .lesson_pages import LessonDocument, build_lesson_pages, render_review_report, write_lesson_pages_json
+from .llm_handoff import render_llm_handoff_markdown
 from .ocr_environment import (
     OCR_REQUIRED_MODES,
     format_environment_report,
@@ -558,6 +559,22 @@ def main() -> None:
     canva_parser.add_argument("--input", required=True, help="入力JSON")
     canva_parser.add_argument("--output", required=True, help="出力Markdown")
 
+    llm_handoff_parser = subparsers.add_parser(
+        "llm-handoff",
+        help="editable/lesson_pages.jsonから、ChatGPT/Claude等へ手作業で貼り付けるためのMarkdownを生成"
+        "（LLM出力の自動取り込みは行わない）",
+    )
+    llm_handoff_parser.add_argument("--input", required=True, help="入力lesson_pages.json（editable配下等）")
+    llm_handoff_parser.add_argument(
+        "--output", default="output/llm_handoff.md", help="出力Markdown（既定: output/llm_handoff.md）"
+    )
+    llm_handoff_parser.add_argument(
+        "--page-start", type=int, default=None, help="対象とする先頭page_no（省略時は先頭ページから）"
+    )
+    llm_handoff_parser.add_argument(
+        "--page-end", type=int, default=None, help="対象とする末尾page_no（省略時は末尾ページまで）"
+    )
+
     docx_parser = subparsers.add_parser("docx", help="Word教材(docx)を生成")
     docx_parser.add_argument("--input", required=True, help="入力JSON")
     docx_parser.add_argument("--output", required=True, help="出力docx")
@@ -655,6 +672,19 @@ def main() -> None:
             document = load_lesson_document(args.input)
             write_text(args.output, render_canva_design(document))
             validate_generated_file(args.output, "canva")
+            logger.record_generated_file(args.output)
+        elif args.command == "llm-handoff":
+            document = load_lesson_document(args.input)
+            write_text(
+                args.output,
+                render_llm_handoff_markdown(document, page_start=args.page_start, page_end=args.page_end),
+            )
+            validate_generated_file(args.output, "llm-handoff")
+            logger.add_section("INPUT", {
+                "input_path": args.input,
+                "page_start": args.page_start,
+                "page_end": args.page_end,
+            })
             logger.record_generated_file(args.output)
         elif args.command == "docx":
             document = load_lesson_document(args.input)

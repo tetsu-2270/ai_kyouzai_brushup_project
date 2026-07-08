@@ -15,7 +15,9 @@ examples/
   requirements_ai_instagram.json    # 要件定義サンプル（restructure/generateの--requirements用）
 src/
   cli.py                     # CLI入口。check-ocr / import-source / build-all / regenerate / lesson-pages / review-report /
-                              # generate / canva / docx / pdf / scenario / canva-sync / wp-publish の13サブコマンド
+                              # generate / canva / llm-handoff / docx / pdf / scenario / canva-sync / wp-publish の14サブコマンド
+  llm_handoff.py               # editable/lesson_pages.jsonから、ChatGPT/Claude等へ手作業で貼り付けるための
+                              # Markdownを生成（LLM出力の自動取り込みは行わない。詳細はdocs/11参照）
   import_source.py           # 元資料(画像/PDF/PPTX)からのテキスト・画像自動取り込み（imported_pages.json+画像アセット生成）。
                               # 画像取り込み時、ocr_environment.pyでOCR環境を事前診断（Phase 10.1）
   ocr_environment.py          # OCR実行に必要なtesseract/日本語言語データ/Homebrewの診断（PATHに無いだけか、

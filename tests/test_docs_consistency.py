@@ -413,3 +413,31 @@ def test_docs_04_lists_masking_target_keywords():
     text = _read(REPO_ROOT / "docs" / "04_output_spec.md")
     for keyword in ("password", "token", "api_key", "secret", "authorization"):
         assert keyword in text.lower()
+
+
+# --- llm-handoff: LLM手作業投入用中間ファイル生成 -----------------------------------
+
+
+def test_llm_handoff_workflow_doc_exists_and_is_indexed():
+    """docs/11_llm_handoff_workflow.mdが存在し、docs/README.mdから参照されていることを確認する。"""
+    guide_path = REPO_ROOT / "docs" / "11_llm_handoff_workflow.md"
+    assert guide_path.exists()
+    docs_readme_text = _read(REPO_ROOT / "docs" / "README.md")
+    assert "11_llm_handoff_workflow.md" in docs_readme_text
+
+
+def test_docs_llm_handoff_explains_no_auto_ingestion():
+    """LLM出力の自動取り込みは行わない旨が、README/docs/11に明記されていることを確認する。"""
+    for path in (REPO_ROOT / "README.md", REPO_ROOT / "docs" / "11_llm_handoff_workflow.md"):
+        text = _read(path)
+        assert "自動取り込み" in text
+
+
+def test_docs_llm_handoff_includes_constitution_phrase():
+    text = _read(REPO_ROOT / "docs" / "11_llm_handoff_workflow.md")
+    assert "ブラッシュアップであって、作り直しではない" in text
+
+
+def test_readme_documents_llm_handoff_command():
+    text = _read(REPO_ROOT / "README.md")
+    assert "llm-handoff" in text

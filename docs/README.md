@@ -14,6 +14,7 @@
 | [`07_api_integration_design.md`](07_api_integration_design.md) | 将来のローカルLLM活用・API連携設計メモ | OCR/ブラッシュアップ/Canva設計へのローカルLLM組み込み構想（外部API連携は必要になった場合の選択肢。未実装・設計のみ） |
 | [`08_user_acceptance_test.md`](08_user_acceptance_test.md) | **実利用テスト手順（Phase 8〜9・作成者向けの主導線）** | 元資料（画像/PDF/PPTX）の置き方、`build-all`の実行手順・`--output-format`の選び方、`editable/lesson_pages.json`の再生成（`regenerate`）、確認順序、評価観点 |
 | [`09_editable_regenerate_guide.md`](09_editable_regenerate_guide.md) | **editable編集・再生成ガイド（Phase 10）** | `output/editable/lesson_pages.json`の編集してよい項目・編集しない方がよい項目、`regenerate`の具体例、日本語フォント（`--font-path`）の指定方法・トラブルシューティング |
+| [`11_llm_handoff_workflow.md`](11_llm_handoff_workflow.md) | **LLM手作業投入ワークフロー** | `llm-handoff`コマンドの使い方、ChatGPT/Claude等への貼り付け手順、生成されるMarkdownの内容、LLM出力を`editable/lesson_pages.json`へ反映する運用（自動取り込みは行わない） |
 | [`feedback_template.md`](feedback_template.md) | フィードバックシート（テンプレート） | 実利用テストの結果を記録するチェックリスト。コピーして使う |
 | [`99_implementation_review_brief.md`](99_implementation_review_brief.md) | 時点レビュー・スナップショット | Phase 1〜4完了時点（2026-07-04）の記録。以降更新しない運用ルールは同ファイル冒頭を参照 |
 | [`99_phase7_review_2026-07-05.md`](99_phase7_review_2026-07-05.md) | 時点レビュー・スナップショット | Phase 7（restructure品質改善・出力のMarkdown混入対策一式）完了時点（2026-07-05）の記録 |
@@ -30,6 +31,7 @@
 - **`output/editable/lesson_pages.json`を編集して再生成したい・日本語フォントの文字化けを直したい** → `09_editable_regenerate_guide.md`
 - **画像取り込み後にテキストが空になる・OCRがうまくいかない・`build-all --mode proofread`がエラー終了する** → `python3 -m src.cli check-ocr`または`bash scripts/check_ocr_env.sh`で診断（`04_output_spec.md`「OCR前提の事前チェック」、`08_user_acceptance_test.md`「OCRについての注意」参照）
 - **なぜエラーになったか・実行内容を後から確認したい** → `logs/YYYYMMDD_HHMMSS_<command>.log`（`04_output_spec.md`「実行ログ（logs/）の標準仕様」、`08_user_acceptance_test.md`「実行ログと成功判定の考え方」参照）
+- **教材の構成チェック・文章のブラッシュアップ案をChatGPT/Claude等にもらいたい** → `11_llm_handoff_workflow.md`（`llm-handoff`コマンド。LLM出力の自動取り込みは行わない）
 - **過去のレビュー経緯を知りたい** → `99_implementation_review_brief.md`（ただし現行仕様の正ではない点に注意）
 
 ## `05_*` と `99_*` の運用ルール（重要）

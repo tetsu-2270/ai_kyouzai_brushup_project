@@ -1505,3 +1505,54 @@ def test_regenerate_fails_when_rendered_images_not_actually_generated(tmp_path, 
     with pytest.raises(SystemExit) as exc_info:
         main()
     assert exc_info.value.code == 1
+
+
+# --- LLM手作業投入用中間ファイル生成（llm-handoff） ---------------------------------
+
+
+def test_llm_handoff_cli_generates_markdown_from_editable_lesson_pages(tmp_path, monkeypatch):
+    """build-all/lesson-pagesで作ったeditable/lesson_pages.jsonから、llm-handoffコマンドで
+    llm_handoff.mdが生成されることを確認する（CLIからの実行確認）。"""
+    editable_path = tmp_path / "output" / "editable" / "lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages", "--mode", "generate",
+            "--requirements", "examples/requirements_ai_instagram.json",
+            "--output", str(editable_path),
+        ],
+    )
+    main()
+
+    output_path = tmp_path / "output" / "llm_handoff.md"
+    monkeypatch.setattr(
+        "sys.argv", ["cli", "llm-handoff", "--input", str(editable_path), "--output", str(output_path)]
+    )
+    main()
+
+    assert output_path.exists()
+    assert output_path.stat().st_size > 0
+    text = output_path.read_text(encoding="utf-8")
+    assert "ブラッシュアップであって、作り直しではない" in text
+    assert "### Page 1" in text
+
+
+def test_llm_handoff_cli_default_output_path(tmp_path, monkeypatch):
+    """--outputを省略した場合、output/llm_handoff.md（カレントディレクトリ基準）に
+    生成されることを確認する。"""
+    editable_path = tmp_path / "editable_lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages", "--mode", "generate",
+            "--requirements", "examples/requirements_ai_instagram.json",
+            "--output", str(editable_path),
+        ],
+    )
+    main()
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["cli", "llm-handoff", "--input", str(editable_path)])
+    main()
+
+    assert (tmp_path / "output" / "llm_handoff.md").exists()
