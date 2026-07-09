@@ -2039,3 +2039,160 @@ def test_apply_llm_suggestions_cli_accepts_ocr_fixed_input(tmp_path, monkeypatch
     main()
 
     assert (tmp_path / "output" / "llm_suggestion_candidates.json").exists()
+
+
+# --- 高重要度OCR候補の一括approved化（approve-ocr-candidates） --------------------------
+
+
+def test_approve_ocr_candidates_cli_generates_output_and_report(tmp_path, monkeypatch):
+    """ocr-check→approve-ocr-candidatesの流れで、approved化されたcandidates JSONと
+    レポートの両方が生成されることを確認する（CLIからの実行確認）。"""
+    lesson_pages_path = tmp_path / "output" / "editable" / "lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages", "--mode", "proofread",
+            "--input", "examples/sample_pages.json",
+            "--output", str(lesson_pages_path),
+        ],
+    )
+    main()
+
+    candidates_path = tmp_path / "output" / "ocr_correction_candidates.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "ocr-check", "--input", str(lesson_pages_path),
+            "--output", str(tmp_path / "output" / "ocr_check_report.md"),
+            "--candidates-output", str(candidates_path),
+        ],
+    )
+    main()
+
+    approved_path = tmp_path / "output" / "ocr_correction_candidates.approved.json"
+    report_path = tmp_path / "output" / "ocr_approval_report.md"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "approve-ocr-candidates",
+            "--input", str(candidates_path), "--output", str(approved_path), "--report", str(report_path),
+        ],
+    )
+    main()
+
+    assert approved_path.exists()
+    assert approved_path.stat().st_size > 0
+    assert report_path.exists()
+    assert report_path.stat().st_size > 0
+
+    import json
+    data = json.loads(approved_path.read_text(encoding="utf-8"))
+    assert "approval" in data["summary"]
+
+
+def test_approve_ocr_candidates_cli_does_not_overwrite_input(tmp_path, monkeypatch):
+    """--inputで指定した元candidates JSONが変更されないことを確認する。"""
+    lesson_pages_path = tmp_path / "output" / "editable" / "lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages", "--mode", "proofread",
+            "--input", "examples/sample_pages.json",
+            "--output", str(lesson_pages_path),
+        ],
+    )
+    main()
+
+    candidates_path = tmp_path / "output" / "ocr_correction_candidates.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "ocr-check", "--input", str(lesson_pages_path),
+            "--output", str(tmp_path / "output" / "ocr_check_report.md"),
+            "--candidates-output", str(candidates_path),
+        ],
+    )
+    main()
+    original_content = candidates_path.read_text(encoding="utf-8")
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "approve-ocr-candidates", "--input", str(candidates_path),
+            "--output", str(tmp_path / "output" / "ocr_correction_candidates.approved.json"),
+        ],
+    )
+    main()
+
+    assert candidates_path.read_text(encoding="utf-8") == original_content
+
+
+def test_approve_ocr_candidates_cli_dry_run_does_not_write_output(tmp_path, monkeypatch):
+    """--dry-runを指定した場合、出力JSONは生成されずレポートのみ生成されることを確認する。"""
+    lesson_pages_path = tmp_path / "output" / "editable" / "lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages", "--mode", "proofread",
+            "--input", "examples/sample_pages.json",
+            "--output", str(lesson_pages_path),
+        ],
+    )
+    main()
+
+    candidates_path = tmp_path / "output" / "ocr_correction_candidates.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "ocr-check", "--input", str(lesson_pages_path),
+            "--output", str(tmp_path / "output" / "ocr_check_report.md"),
+            "--candidates-output", str(candidates_path),
+        ],
+    )
+    main()
+
+    output_path = tmp_path / "output" / "ocr_correction_candidates.approved.json"
+    report_path = tmp_path / "output" / "ocr_approval_report.md"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "approve-ocr-candidates", "--input", str(candidates_path),
+            "--output", str(output_path), "--report", str(report_path), "--dry-run",
+        ],
+    )
+    main()
+
+    assert not output_path.exists()
+    assert report_path.exists()
+
+
+def test_approve_ocr_candidates_cli_default_output_path(tmp_path, monkeypatch):
+    """--outputを省略した場合、既定パスに生成されることを確認する。"""
+    lesson_pages_path = tmp_path / "editable_lesson_pages.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "lesson-pages", "--mode", "proofread",
+            "--input", "examples/sample_pages.json",
+            "--output", str(lesson_pages_path),
+        ],
+    )
+    main()
+
+    candidates_path = tmp_path / "candidates.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "ocr-check", "--input", str(lesson_pages_path),
+            "--candidates-output", str(candidates_path),
+        ],
+    )
+    monkeypatch.chdir(tmp_path)
+    main()
+
+    monkeypatch.setattr(
+        "sys.argv", ["cli", "approve-ocr-candidates", "--input", str(candidates_path)]
+    )
+    main()
+
+    assert (tmp_path / "output" / "ocr_correction_candidates.approved.json").exists()

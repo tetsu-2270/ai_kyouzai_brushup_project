@@ -15,9 +15,11 @@ build-all または lesson-pages で editable/lesson_pages.json を作る
 ↓
 ocr-check で ocr_check_report.md と ocr_correction_candidates.json を生成する
 ↓
-人間が ocr_correction_candidates.json を確認する
+（任意）approve-ocr-candidates で明確な高重要度候補だけ一括approved化する（12節参照）
 ↓
-反映してよい候補だけ status を approved に変更する
+人間が ocr_correction_candidates(.approved).json を確認する
+↓
+反映してよい候補だけ status を approved に変更する（一括approved化した分は済んでいる）
 ↓
 apply-ocr-corrections を実行する
 ↓
@@ -128,3 +130,70 @@ python3 -m src.cli regenerate --input output/editable/lesson_pages.ocr_fixed.jso
 - 反映後は`ocr_apply_report.md`の「反映された候補一覧」「差分確認用メモ」を必ず確認してください。
 - `source_page_no`/`source_image`/`assets`/`metadata`、ページ数・ページ順は変更されません。
 - 将来的には、候補承認を支援するUIや、ローカルLLMによる承認判断支援へつなげられる可能性があります（今回は未実装。詳細は[`docs/07_api_integration_design.md`](07_api_integration_design.md)参照）。
+
+## 12. 高重要度OCR候補の一括approved化（`approve-ocr-candidates`）
+
+`ocr_correction_candidates.json`の候補を1件ずつ手作業で`approved`に変更するのは手間がかかります。`approve-ocr-candidates`は、**条件に一致する明確な候補だけ**を一括で`status: approved`に変更するコマンドです。`editable/lesson_pages.json`への実際の反映は行いません（引き続き`apply-ocr-corrections`が行います）。
+
+### 12.1 使い方・実行例
+
+```bash
+python3 -m src.cli approve-ocr-candidates \
+  --input output/ocr_correction_candidates.json \
+  --output output/ocr_correction_candidates.approved.json \
+  --report output/ocr_approval_report.md \
+  --severity high \
+  --action replace \
+  --confidence high
+```
+
+- `--input`: `ocr-check`が生成した`ocr_correction_candidates.json`（**このファイルは上書きされません**）。
+- `--output`: approved化後のcandidates JSON出力先（既定: `output/ocr_correction_candidates.approved.json`）。
+- `--report`: approved化レポートの出力先（省略時はレポートを生成しません）。
+- `--severity`/`--action`/`--confidence`: 絞り込み条件（既定はそれぞれ`high`/`replace`/`high`。空文字を指定するとそのfieldでは絞り込みません）。
+- `--detection-type`: `detection_type`での絞り込み（既定: 絞り込みなし）。
+- `--dry-run`: 実際には`--output`のJSONを生成せず、approved化予定の件数だけレポートに出します。
+
+その後、通常通り`apply-ocr-corrections`で反映します。
+
+```bash
+python3 -m src.cli apply-ocr-corrections \
+  --input output/editable/lesson_pages.json \
+  --candidates output/ocr_correction_candidates.approved.json \
+  --output output/editable/lesson_pages.ocr_fixed.json \
+  --report output/ocr_apply_report.md
+```
+
+### 12.2 安全条件（CLI引数の指定内容にかかわらず常に適用）
+
+以下に該当する候補は、`--severity`/`--action`/`--confidence`にどのような値を指定しても**絶対に自動approved化されません**。
+
+- `action: delete`（削除候補）
+- `action: source_check`（元画像確認が必要な候補）
+- `status: needs_source_check` / `needs_human_review` / `rejected`
+- `detection_type`が`incomplete_sentence`/`source_check_required`/`inferred_ocr_correction`/`unusual_symbol`/`garbled_latin`/`ocr_noise_delete_candidate`のいずれか
+- `suggested`または`original`が空
+
+実質的に、今回の自動approved化対象は**辞書一致（`common_ocr_misread`）の高確信度replace候補だけ**です。
+
+### 12.3 `summary.approval`
+
+出力されるcandidates JSONの`summary`には、以下が追加されます。
+
+```json
+"approval": {
+  "approved_by_command": true,
+  "approved_count": 28,
+  "criteria": { "severity": "high", "action": "replace", "confidence": "high", "detection_type": null }
+}
+```
+
+### 12.4 `ocr_approval_report.md`の読み方
+
+レポートは以下の構成です。
+
+1. **サマリー**: 入力候補数・approved化対象件数・変更なし件数・入出力ファイル
+2. **approved化した候補**: `candidate_id`/Page/field/`original`/`suggested`/severity/action/confidence/detection_typeのテーブル
+3. **approved化しなかった候補**: 理由別の件数
+4. **注意**: 自動approved対象外の条件一覧
+5. **apply-ocr-correctionsとの関係**: 次工程コマンド例

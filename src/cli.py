@@ -27,6 +27,12 @@ from .ocr_apply import (
     render_ocr_apply_report_markdown,
     write_lesson_pages,
 )
+from .ocr_approval import (
+    approve_ocr_candidates,
+    load_ocr_correction_candidates,
+    render_ocr_approval_report_markdown,
+    write_ocr_correction_candidates,
+)
 from .ocr_check import (
     build_ocr_correction_candidates,
     render_ocr_check_report_markdown,
@@ -652,6 +658,39 @@ def main() -> None:
         "--dry-run", action="store_true", help="出力JSONを生成せず、反映予定の内容だけレポートに出す"
     )
 
+    approve_ocr_candidates_parser = subparsers.add_parser(
+        "approve-ocr-candidates",
+        help="ocr-checkが生成したocr_correction_candidates.jsonのうち、条件に一致する明確な候補"
+        "（既定: 高重要度・高確信度のreplace候補）だけをstatus: approvedにする"
+        "（editable/lesson_pages.jsonへの反映はapply-ocr-correctionsが行う）",
+    )
+    approve_ocr_candidates_parser.add_argument(
+        "--input", required=True, help="入力candidates JSON（ocr-checkが生成したもの。上書きしない）"
+    )
+    approve_ocr_candidates_parser.add_argument(
+        "--output",
+        default="output/ocr_correction_candidates.approved.json",
+        help="approved化後のcandidates JSON出力先（既定: output/ocr_correction_candidates.approved.json）",
+    )
+    approve_ocr_candidates_parser.add_argument(
+        "--report", default=None, help="approved化レポートの出力先（省略時は生成しない）"
+    )
+    approve_ocr_candidates_parser.add_argument(
+        "--severity", default="high", help="approved対象の重要度（既定: high。空文字指定で絞り込み無効）"
+    )
+    approve_ocr_candidates_parser.add_argument(
+        "--action", default="replace", help="approved対象のaction（既定: replace。空文字指定で絞り込み無効）"
+    )
+    approve_ocr_candidates_parser.add_argument(
+        "--confidence", default="high", help="approved対象のconfidence（既定: high。空文字指定で絞り込み無効）"
+    )
+    approve_ocr_candidates_parser.add_argument(
+        "--detection-type", default=None, help="approved対象のdetection_type（既定: 絞り込みなし）"
+    )
+    approve_ocr_candidates_parser.add_argument(
+        "--dry-run", action="store_true", help="出力JSONを生成せず、approved化予定の件数だけ確認する"
+    )
+
     apply_llm_suggestions_parser = subparsers.add_parser(
         "apply-llm-suggestions",
         help="ChatGPT/Claude等の回答Markdownを読み込み、ページ別の改善候補として構造化"
@@ -836,6 +875,36 @@ def main() -> None:
             if not args.dry_run:
                 logger.record_generated_file(args.output)
             logger.record_generated_file(args.report)
+        elif args.command == "approve-ocr-candidates":
+            candidates_data = load_ocr_correction_candidates(args.input)
+            criteria = {
+                "severity": args.severity or None,
+                "action": args.action or None,
+                "confidence": args.confidence or None,
+                "detection_type": args.detection_type or None,
+            }
+            result_data, result = approve_ocr_candidates(candidates_data, **criteria)
+            if not args.dry_run:
+                write_ocr_correction_candidates(result_data, args.output)
+                validate_generated_file(args.output, "approve-ocr-candidates")
+            if args.report:
+                write_text(
+                    args.report,
+                    render_ocr_approval_report_markdown(
+                        result, input_path=args.input, output_path=args.output, dry_run=args.dry_run
+                    ),
+                )
+                validate_generated_file(args.report, "approve-ocr-candidates(report)")
+            logger.add_section("INPUT", {"input_path": args.input, "criteria": criteria, "dry_run": args.dry_run})
+            logger.add_section("OCR_APPROVAL", {
+                "input_count": result["input_count"],
+                "approved_count": len(result["approved"]),
+                "not_approved_count": len(result["not_approved"]),
+            })
+            if not args.dry_run:
+                logger.record_generated_file(args.output)
+            if args.report:
+                logger.record_generated_file(args.report)
         elif args.command == "apply-llm-suggestions":
             document = load_lesson_document(args.lesson_pages)
             suggestions_text = load_llm_suggestions_markdown(args.suggestions)

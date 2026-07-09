@@ -662,3 +662,23 @@ def test_docs_13_explains_candidate_deduplication():
 def test_readme_mentions_deduplication():
     text = _read(REPO_ROOT / "README.md")
     assert "重複抑制" in text
+
+
+# --- 高重要度OCR候補の一括approved化（approve-ocr-candidates） --------------------------
+
+
+def test_docs_14_explains_approve_ocr_candidates():
+    text = _read(REPO_ROOT / "docs" / "14_apply_ocr_corrections_workflow.md")
+    assert "approve-ocr-candidates" in text
+    assert "summary.approval" in text or "approval" in text
+
+
+def test_docs_14_explains_never_approve_conditions():
+    text = _read(REPO_ROOT / "docs" / "14_apply_ocr_corrections_workflow.md")
+    assert "action: delete" in text
+    assert "inferred_ocr_correction" in text
+
+
+def test_readme_documents_approve_ocr_candidates_command():
+    text = _read(REPO_ROOT / "README.md")
+    assert "approve-ocr-candidates" in text
