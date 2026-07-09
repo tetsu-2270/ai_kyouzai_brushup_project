@@ -411,6 +411,109 @@ def analyze_page_ocr_quality(page: LessonPage, patterns: dict[str, Any] | None =
     return candidates
 
 
+# --- 候補の重複抑制 ---------------------------------------------------------------------
+#
+# 同じOCR崩れから複数の検出器が重なって候補を出すことがある（例:「時 9ま1よう」（辞書一致）と
+# 「9ま1よう」（数字かな混在パターン）は同じ崩れの部分文字列）。検出の網羅性は落とさず、
+# レポート上の重複だけを整理するため、生成後の候補一覧に対して重複抑制を行う。
+
+# 「低価値」な検出種別: 辞書一致（common_ocr_misread/inferred_ocr_correction/
+# source_check_required）や、構造的に独立した情報を持つunusual_symbol/incomplete_sentenceとは
+# 異なり、これらは断片的・機械的な検出であり、同じ範囲を指す他の候補に包含・重複される場合は
+# 抑制してよい。
+_LOW_VALUE_DETECTION_TYPES = {"spacing", "garbled_latin", "ocr_noise_delete_candidate"}
+
+_ACTION_PRIORITY = {"replace": 3, "source_check": 2, "delete": 1}
+_STATUS_PRIORITY = {"proposed": 4, "needs_source_check": 3, "needs_human_review": 2, "rejected": 1}
+_CONFIDENCE_PRIORITY = {"high": 3, "medium": 2, "low": 1}
+_SEVERITY_PRIORITY = {"high": 3, "medium": 2, "low": 1}
+
+
+def candidate_priority_score(candidate: dict[str, Any]) -> tuple[int, int, int, int, int, int]:
+    """重複した候補のうちどちらを残すかを判定するための優先度スコア（大きいほど優先）。
+
+    優先順位: action（replace > source_check > delete） → status（proposed >
+    needs_source_check > needs_human_review > rejected） → confidence（high > medium > low）
+    → severity（high > medium > low） → originalの長さ（長い方を優先） → suggestedの有無。
+    """
+    return (
+        _ACTION_PRIORITY.get(candidate.get("action"), 0),
+        _STATUS_PRIORITY.get(candidate.get("status"), 0),
+        _CONFIDENCE_PRIORITY.get(candidate.get("confidence"), 0),
+        _SEVERITY_PRIORITY.get(candidate.get("severity"), 0),
+        len(candidate.get("original") or ""),
+        1 if candidate.get("suggested") else 0,
+    )
+
+
+def _originals_overlap(a: str, b: str) -> bool:
+    if not a or not b:
+        return False
+    return a in b or b in a
+
+
+def deduplicate_ocr_candidates(candidates: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """同一ページ・同一field内で重複・包含関係にある候補を整理する。
+
+    2段階で抑制する。
+    1. 完全重複（同一`original`・同一`detection_type`）は優先度の高い方を1件残す。
+    2. `_LOW_VALUE_DETECTION_TYPES`に該当する候補が、同一グループ内の別候補と`original`が
+       重複・包含関係にあり、かつその別候補の優先度が同等以上の場合は抑制する
+       （`common_ocr_misread`等の辞書一致・`unusual_symbol`等の構造的な候補は、たとえ他の
+       候補と重複していても自動では抑制しない。high confidence replacementと
+       unusual_symbolが同時に有用なケース等を残すため）。
+
+    グループ化の単位は`page_no`+`field`。別ページ・別fieldの候補は比較しない。
+    戻り値は`(重複抑制後の候補一覧, {"before":..., "after":..., "suppressed":...})`。
+    """
+    before = len(candidates)
+    groups: dict[tuple[Any, str], list[dict[str, Any]]] = {}
+    for candidate in candidates:
+        groups.setdefault((candidate["page_no"], candidate["field"]), []).append(candidate)
+
+    kept: list[dict[str, Any]] = []
+    for group in groups.values():
+        suppressed_ids: set[int] = set()
+
+        # 1. 完全重複（同一original・同一detection_type）は優先度の高い方を残す
+        best_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+        for candidate in group:
+            key = (candidate["original"], candidate["detection_type"])
+            existing = best_by_key.get(key)
+            if existing is None:
+                best_by_key[key] = candidate
+                continue
+            if candidate_priority_score(candidate) > candidate_priority_score(existing):
+                suppressed_ids.add(id(existing))
+                best_by_key[key] = candidate
+            else:
+                suppressed_ids.add(id(candidate))
+
+        remaining = [c for c in group if id(c) not in suppressed_ids]
+
+        # 2. 低価値な検出種別が、より優先度の高い（同等含む）候補に包含・重複される場合は抑制する
+        for i, candidate in enumerate(remaining):
+            if id(candidate) in suppressed_ids:
+                continue
+            if candidate["detection_type"] not in _LOW_VALUE_DETECTION_TYPES:
+                continue
+            candidate_score = candidate_priority_score(candidate)
+            for j, other in enumerate(remaining):
+                if i == j or id(other) in suppressed_ids:
+                    continue
+                if not _originals_overlap(candidate["original"], other["original"]):
+                    continue
+                other_score = candidate_priority_score(other)
+                if other_score > candidate_score or (other_score == candidate_score and j < i):
+                    suppressed_ids.add(id(candidate))
+                    break
+
+        kept.extend(c for c in group if id(c) not in suppressed_ids)
+
+    after = len(kept)
+    return kept, {"before": before, "after": after, "suppressed": before - after}
+
+
 def build_correction_candidate(
     page: LessonPage, page_index: int, raw: dict[str, Any], candidate_id: str
 ) -> dict[str, Any]:
@@ -468,14 +571,20 @@ def build_ocr_correction_candidates(
         "load_status": "default_only",
     }
 
-    candidates: list[dict[str, Any]] = []
-    counts = {"high": 0, "medium": 0, "low": 0}
+    raw_candidates: list[dict[str, Any]] = []
     for page_index, page in enumerate(document.pages):
         for raw in analyze_page_ocr_quality(page, patterns):
-            candidate_id = f"ocr-{len(candidates) + 1:04d}"
-            candidate = build_correction_candidate(page, page_index, raw, candidate_id)
-            candidates.append(candidate)
-            counts[candidate["severity"]] = counts.get(candidate["severity"], 0) + 1
+            # 重複抑制前の仮ID。抑制後に連番で振り直すため、ここでは一意性のみ確保する。
+            candidate_id = f"ocr-{len(raw_candidates) + 1:04d}"
+            raw_candidates.append(build_correction_candidate(page, page_index, raw, candidate_id))
+
+    candidates, dedupe_summary = deduplicate_ocr_candidates(raw_candidates)
+    for index, candidate in enumerate(candidates, start=1):
+        candidate["candidate_id"] = f"ocr-{index:04d}"
+
+    counts = {"high": 0, "medium": 0, "low": 0}
+    for candidate in candidates:
+        counts[candidate["severity"]] = counts.get(candidate["severity"], 0) + 1
 
     return {
         "version": 1,
@@ -488,7 +597,10 @@ def build_ocr_correction_candidates(
             "high": counts["high"],
             "medium": counts["medium"],
             "low": counts["low"],
+            "candidates_before_dedupe": dedupe_summary["before"],
+            "suppressed_duplicate_candidates": dedupe_summary["suppressed"],
         },
+        "dedupe": dedupe_summary,
         "patterns": {
             "external_path": patterns_meta.get("external_path"),
             "load_status": patterns_meta.get("load_status"),
@@ -548,7 +660,12 @@ def _pages_requiring_image_check(candidates: list[dict[str, Any]]) -> set[int]:
     }
 
 
-def _format_overall_summary_section(document: LessonDocument, candidates: list[dict[str, Any]], candidates_output: str) -> str:
+def _format_overall_summary_section(
+    document: LessonDocument,
+    candidates: list[dict[str, Any]],
+    candidates_output: str,
+    dedupe_summary: dict[str, int] | None = None,
+) -> str:
     pages_with_candidates = {c["page_no"] for c in candidates}
     pages_requiring_image_check = _pages_requiring_image_check(candidates)
     by_type: dict[str, int] = {}
@@ -557,6 +674,7 @@ def _format_overall_summary_section(document: LessonDocument, candidates: list[d
     high = sum(1 for c in candidates if c["severity"] == "high")
     medium = sum(1 for c in candidates if c["severity"] == "medium")
     low = sum(1 for c in candidates if c["severity"] == "low")
+    dedupe_summary = dedupe_summary or {"before": len(candidates), "suppressed": 0}
 
     lines = [
         "## 3. 全体サマリー",
@@ -565,6 +683,8 @@ def _format_overall_summary_section(document: LessonDocument, candidates: list[d
         f"- OCR確認対象ページ数: {len(document.pages)}",
         f"- 要確認ページ数: {len(pages_with_candidates)}",
         f"- 検出された疑わしい語句・候補の総数: {len(candidates)}",
+        f"- 重複抑制前の候補数: {dedupe_summary.get('before', len(candidates))}",
+        f"- 重複抑制された候補数: {dedupe_summary.get('suppressed', 0)}",
         f"- 意味不明な英字・記号列の件数: {by_type.get('garbled_latin', 0)}",
         f"- よくあるOCR誤認識候補の件数: {by_type.get('common_ocr_misread', 0)}",
         f"- 未完の可能性がある文の件数: {by_type.get('incomplete_sentence', 0)}",
@@ -871,11 +991,12 @@ def render_ocr_check_report_markdown(
     """
     title = document.metadata.project_title or "教材ブラッシュアップ設計書"
     candidates = candidates_data.get("candidates", [])
+    dedupe_summary = candidates_data.get("dedupe")
     sections = [
         f"# {title}：OCR品質チェックレポート",
         _format_purpose_section(),
         _format_usage_section(),
-        _format_overall_summary_section(document, candidates, candidates_output),
+        _format_overall_summary_section(document, candidates, candidates_output, dedupe_summary),
         _format_detection_summary_section(candidates),
         _format_severity_section(candidates),
         _format_flagged_pages_section(document, candidates),

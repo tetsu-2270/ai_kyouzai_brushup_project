@@ -648,3 +648,17 @@ def test_docs_13_warns_against_over_correction():
 def test_readme_documents_ocr_patterns_config():
     text = _read(REPO_ROOT / "README.md")
     assert "config/ocr_patterns.json" in text
+
+
+# --- OCR候補の重複抑制 ---------------------------------------------------------------------
+
+
+def test_docs_13_explains_candidate_deduplication():
+    text = _read(REPO_ROOT / "docs" / "13_ocr_quality_check_workflow.md")
+    assert "重複抑制" in text
+    assert "candidate_priority_score" in text
+
+
+def test_readme_mentions_deduplication():
+    text = _read(REPO_ROOT / "README.md")
+    assert "重複抑制" in text

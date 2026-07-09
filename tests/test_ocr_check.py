@@ -2,6 +2,8 @@ from src.lesson_pages import LessonDocument, LessonMetadata, LessonPage
 from src.ocr_check import (
     analyze_page_ocr_quality,
     build_ocr_correction_candidates,
+    candidate_priority_score,
+    deduplicate_ocr_candidates,
     detect_common_ocr_misreads,
     detect_garbled_latin_sequences,
     detect_incomplete_sentences,
@@ -397,3 +399,138 @@ def test_candidates_json_includes_patterns_summary():
     assert "patterns" in data
     assert data["patterns"]["load_status"] == "default_only"
     assert data["patterns"]["high_confidence_replacements"] > 0
+
+
+# --- OCR候補の重複抑制（deduplicate_ocr_candidates） ---------------------------------------
+
+
+def _raw_candidate(**kwargs):
+    defaults = dict(
+        candidate_id="ocr-0001", page_no=1, page_index=0, field="body",
+        original="x", suggested=None, action="source_check", severity="medium",
+        reason="test", detection_type="spacing", source_page_no=[1], source_image="",
+        confidence="medium", requires_image_check=True, status="proposed", human_note="",
+    )
+    defaults.update(kwargs)
+    return defaults
+
+
+def test_exact_duplicate_candidates_are_reduced_to_one():
+    candidates = [
+        _raw_candidate(original="RSS", detection_type="garbled_latin"),
+        _raw_candidate(original="RSS", detection_type="garbled_latin"),
+    ]
+    deduped, summary = deduplicate_ocr_candidates(candidates)
+    assert len(deduped) == 1
+    assert summary == {"before": 2, "after": 1, "suppressed": 1}
+
+
+def test_page7_style_dedupe_keeps_only_inferred_correction():
+    """「時 9ま1よう → 決めましょう」と「9ま1よう」がある場合、前者が残ることを確認する。"""
+    candidates = [
+        _raw_candidate(
+            original="時 9ま1よう", suggested="決めましょう", action="replace",
+            detection_type="inferred_ocr_correction", status="needs_source_check", confidence="low",
+        ),
+        _raw_candidate(original="9ま1よう", detection_type="spacing", action="source_check"),
+        _raw_candidate(original="を\n: 時 9ま1よう", detection_type="spacing", action="source_check"),
+    ]
+    deduped, summary = deduplicate_ocr_candidates(candidates)
+    assert len(deduped) == 1
+    assert deduped[0]["original"] == "時 9ま1よう"
+    assert summary["suppressed"] == 2
+
+
+def test_page20_style_dedupe_keeps_only_source_check_required():
+    """「SAAT こコ全わった」と「SAAT」がある場合、前者が残ることを確認する。"""
+    candidates = [
+        _raw_candidate(
+            original="SAAT こコ全わった", detection_type="source_check_required",
+            action="source_check", status="needs_source_check",
+        ),
+        _raw_candidate(original="SAAT", detection_type="garbled_latin", action="delete", status="needs_human_review"),
+    ]
+    deduped, summary = deduplicate_ocr_candidates(candidates)
+    assert len(deduped) == 1
+    assert deduped[0]["original"] == "SAAT こコ全わった"
+
+
+def test_page24_style_both_high_confidence_and_unusual_symbol_are_kept():
+    """「実貴 → 実践」と「[キャラ設定実貴タイム】」は両方残ることを確認する
+    （単純な包含関係だけで消しすぎない）。"""
+    candidates = [
+        _raw_candidate(
+            original="実貴", suggested="実践", action="replace",
+            detection_type="common_ocr_misread", status="proposed", confidence="high", field="title",
+        ),
+        _raw_candidate(
+            original="[キャラ設定実貴タイム】", detection_type="unusual_symbol",
+            action="source_check", status="proposed", field="title",
+        ),
+    ]
+    deduped, summary = deduplicate_ocr_candidates(candidates)
+    assert len(deduped) == 2
+    assert summary["suppressed"] == 0
+
+
+def test_dedupe_does_not_suppress_across_different_fields():
+    candidates = [
+        _raw_candidate(original="ae", field="title", detection_type="garbled_latin", action="delete"),
+        _raw_candidate(original="ae", field="body", detection_type="garbled_latin", action="delete"),
+    ]
+    deduped, summary = deduplicate_ocr_candidates(candidates)
+    assert len(deduped) == 2
+    assert summary["suppressed"] == 0
+
+
+def test_dedupe_does_not_suppress_across_different_pages():
+    candidates = [
+        _raw_candidate(original="ae", page_no=1, detection_type="garbled_latin", action="delete"),
+        _raw_candidate(original="ae", page_no=2, detection_type="garbled_latin", action="delete"),
+    ]
+    deduped, summary = deduplicate_ocr_candidates(candidates)
+    assert len(deduped) == 2
+    assert summary["suppressed"] == 0
+
+
+def test_high_confidence_replacement_not_suppressed_by_longer_low_confidence_candidate():
+    """高確信度の短い置換候補は、より長い低信頼候補があっても消されないことを確認する。"""
+    candidates = [
+        _raw_candidate(
+            original="1 つ", suggested="1つ", action="replace",
+            detection_type="common_ocr_misread", status="proposed", confidence="high",
+        ),
+        _raw_candidate(
+            original="全部で1 つあります", detection_type="spacing", action="source_check",
+            status="proposed", confidence="low", severity="low",
+        ),
+    ]
+    deduped, summary = deduplicate_ocr_candidates(candidates)
+    originals = {c["original"] for c in deduped}
+    assert "1 つ" in originals
+    assert summary["suppressed"] == 1
+
+
+def test_dedupe_summary_reported_in_candidates_json():
+    document = _document([
+        _page(page_no=1, body="時 9ま1よう な表現があります"),
+    ])
+    data = build_ocr_correction_candidates(document)
+    assert "dedupe" in data
+    assert set(data["dedupe"].keys()) == {"before", "after", "suppressed"}
+    assert data["summary"]["candidates_before_dedupe"] == data["dedupe"]["before"]
+    assert data["summary"]["suppressed_duplicate_candidates"] == data["dedupe"]["suppressed"]
+
+
+def test_report_includes_dedupe_counts():
+    document = _document([_page(page_no=1, body="時 9ま1よう な表現があります")])
+    data = build_ocr_correction_candidates(document)
+    text = render_ocr_check_report_markdown(document, data)
+    assert "重複抑制前の候補数" in text
+    assert "重複抑制された候補数" in text
+
+
+def test_candidate_priority_score_orders_replace_above_delete():
+    replace_candidate = _raw_candidate(action="replace", status="proposed", confidence="high", severity="high")
+    delete_candidate = _raw_candidate(action="delete", status="needs_human_review", confidence="medium", severity="medium")
+    assert candidate_priority_score(replace_candidate) > candidate_priority_score(delete_candidate)

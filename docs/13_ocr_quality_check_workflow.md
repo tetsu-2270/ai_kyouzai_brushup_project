@@ -238,6 +238,46 @@ python3 -m src.cli llm-handoff --input output/editable/lesson_pages.json --outpu
 
 その後は[`docs/11_llm_handoff_workflow.md`](11_llm_handoff_workflow.md)・[`docs/12_llm_review_apply_workflow.md`](12_llm_review_apply_workflow.md)の流れ（ChatGPT/Claude等への投入 →`edit-plan-template`→`regenerate`）に進みます。`edit_plan_template.md`にも、OCR確認が済んでいるかのチェック項目が含まれます。
 
+## 14. OCR候補の重複抑制
+
+同じOCR崩れから複数の検出器が重なって候補を出すことがあります。例えば「時 9ま1よう」という崩れに対して、辞書一致（推定修正候補）が「時 9ま1よう → 決めましょう」を出す一方、汎用パターン検出（数字とかなの混在検出）が部分文字列の「9ま1よう」や、前後を含む「を\n: 時 9ま1よう」も候補として出してしまうことがあります。
+
+検出の網羅性は落とさずに、レポート上の重複だけを整理するため、候補生成後に**重複抑制**を行っています。
+
+### 14.1 抑制の単位と優先順位
+
+同一`page_no`・同一`field`内の候補だけを比較します（別ページ・別fieldの候補は比較しません）。
+
+1. **完全重複**（同一`original`・同一`detection_type`）は、優先度の高い方を1件だけ残します。
+2. `spacing`/`garbled_latin`/`ocr_noise_delete_candidate`のような**断片的・機械的な検出**（低価値な検出種別）は、同じグループ内の別候補と`original`が重複・包含関係にあり、その別候補の優先度が同等以上であれば抑制します。
+
+優先度は以下の順で判定します（`candidate_priority_score`関数）。
+
+1. `action`: `replace` > `source_check` > `delete`
+2. `status`: `proposed` > `needs_source_check` > `needs_human_review` > `rejected`
+3. `confidence`: `high` > `medium` > `low`
+4. `severity`: `high` > `medium` > `low`
+5. `original`の長さ（長い方を優先）
+6. `suggested`の有無
+
+### 14.2 抑制しないもの
+
+`common_ocr_misread`（辞書一致）・`inferred_ocr_correction`（推定修正候補）・`source_check_required`（元画像確認必須）・`unusual_symbol`（記号・括弧崩れ）・`incomplete_sentence`（未完文）は、他の候補と重複していても自動では抑制しません。これらは断片的な検出ではなく、それぞれ独立した判断材料になるためです。
+
+例えば「実貴 → 実践」（辞書一致・高確信度）と「[キャラ設定実貴タイム】」（括弧崩れ）が同じタイトルから両方検出された場合、前者は自動反映候補として、後者は構造確認候補として、それぞれ別の観点で有用なため**両方残ります**（単純な文字列の包含関係だけでは抑制しません）。
+
+### 14.3 レポート・candidates JSONでの見え方
+
+`ocr_check_report.md`の「3. 全体サマリー」に以下が追加されます。
+
+```text
+- 検出された疑わしい語句・候補の総数: 61
+- 重複抑制前の候補数: 66
+- 重複抑制された候補数: 5
+```
+
+`ocr_correction_candidates.json`の`summary`には`candidates_before_dedupe`/`suppressed_duplicate_candidates`が、トップレベルには`dedupe`（`before`/`after`/`suppressed`）が追加されます。`candidates`配列には重複抑制後の候補だけが出力され、`candidate_id`は抑制後に連番で振り直されます。
+
 ## 15. OCRパターン外部辞書（`config/ocr_patterns.json`）の育て方
 
 OCR崩れ検出・修正候補生成に使う辞書（誤認識辞書・削除候補・推定修正候補・元画像確認必須候補・許可語）は、`src/ocr_check.py`のコードに直接埋め込むのではなく、`src/ocr_patterns.py`が管理する組み込みデフォルトと、`config/ocr_patterns.json`（外部辞書）をマージして使う設計になっています。**実データを処理するたびに新しいOCR崩れパターンを見つけても、コードを変更せずに`config/ocr_patterns.json`を編集するだけで辞書を育てられます。**
