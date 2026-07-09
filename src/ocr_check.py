@@ -7,11 +7,24 @@ from pathlib import Path
 from typing import Any
 
 from .lesson_pages import LessonDocument, LessonPage
+from .ocr_patterns import (
+    default_ocr_patterns,
+    get_allowed_words,
+    get_delete_candidates,
+    get_high_confidence_replacements,
+    get_inferred_candidates,
+    get_source_check_required,
+    patterns_summary,
+)
 
 # OCR結果の品質（誤認識・文字化け・不自然な表記）を、llm-handoffでLLMへ投入する前に
 # システム側で検出・分類し、修正候補を人間が判断しやすい形で提示するモジュール。
 # OCRエンジンの再実行・自動修正・editable/lesson_pages.jsonへの自動反映は行わない
 # （将来のapply-ocr-corrections相当の機能に備え、補正候補は構造化JSONとして出力する）。
+#
+# 検出に使う辞書（誤認識辞書・削除候補・推定修正候補・元画像確認必須候補・許可語）は
+# src/ocr_patterns.pyが管理する。組み込みデフォルトに加え、config/ocr_patterns.jsonが
+# あればマージして使う（コードを変更せずに辞書を育てられるようにするための設計）。
 # 詳細はdocs/13_ocr_quality_check_workflow.md参照。
 
 # 全検出器を適用するフィールド（OCR本文として扱う）。
@@ -22,54 +35,21 @@ _DICTIONARY_ONLY_SCAN_FIELDS = ("layout_instruction",)
 
 _SEVERITY_LABELS = {"high": "高", "medium": "中", "low": "低"}
 
+
 # --- 1. よくあるOCR誤認識辞書（検出のみ・自動置換はしない） ------------------------------
 
-# 各エントリは(修正候補, 重要度)。「1 つ」→「1つ」のように内容を損なわない軽微な誤認識は
-# severityを下げられるよう、辞書全体を一律severityにしない。
-# 「high confidence correction」（修正後がほぼ一意に近いもの）に相当する辞書。
-_OCR_MISREAD_DICTIONARY = {
-    "一買": ("一貫", "high"),
-    "アウトブット": ("アウトプット", "high"),
-    "右労": ("苦労", "high"),
-    "革細": ("些細", "high"),
-    "実貴": ("実践", "high"),
-    "共通説識": ("共通認識", "high"),
-    "人帳面": ("几帳面", "high"),
-    "叱嘘激励": ("叱咤激励", "high"),
-    "全1 1問": ("全11問", "high"),
-    "全1 1 問": ("全11問", "high"),
-    "有崩す": ("崩す", "high"),
-    "生んな経験": ("そんな経験", "high"),
-    "どいう": ("という", "high"),
-    "1 つ": ("1つ", "low"),
-}
 
-# 「inferred correction candidate」: OCR崩れであることは明確だが、復元に推測が入るもの。
-# 断定はできないため、status: needs_source_check・confidence: low で提示する。
-_INFERRED_CORRECTION_DICTIONARY = {
-    "時 9ま1よう": "決めましょう",
-    "ベネフィット計理想の未来": "ベネフィット＝理想の未来",
-    "六坂載祭上": "※無断転載禁止",
-}
+def detect_common_ocr_misreads(text: str, patterns: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """OCR誤認識辞書（`high_confidence_replacements`）に一致する語句を検出する（high confidence correction）。
 
-# 「source check required」: OCR崩れであることは明確だが、正しい復元が難しいもの。
-# suggestedを断定せず、元画像確認が必須の候補として提示する。
-_SOURCE_CHECK_REQUIRED_PHRASES = (
-    "マチオロウーざん",
-    "ERRh se rel Cee oe",
-    "SAAT こコ全わった",
-)
-
-
-def detect_common_ocr_misreads(text: str) -> list[dict[str, Any]]:
-    """OCR誤認識辞書（`_OCR_MISREAD_DICTIONARY`）に一致する語句を検出する（high confidence correction）。
-
-    辞書は将来拡張しやすいよう、この関数の外側にモジュールレベル定数として定義している。
+    辞書は`src/ocr_patterns.py`が管理し、組み込みデフォルトに`config/ocr_patterns.json`を
+    マージした`patterns`を受け取る（省略時は組み込みデフォルトのみ使用）。
     """
     if not text:
         return []
+    patterns = patterns or default_ocr_patterns()
     candidates = []
-    for wrong, (correct, severity) in _OCR_MISREAD_DICTIONARY.items():
+    for wrong, (correct, severity) in get_high_confidence_replacements(patterns).items():
         if wrong in text:
             candidates.append({
                 "original": wrong,
@@ -85,7 +65,7 @@ def detect_common_ocr_misreads(text: str) -> list[dict[str, Any]]:
     return candidates
 
 
-def detect_inferred_ocr_corrections(text: str) -> list[dict[str, Any]]:
+def detect_inferred_ocr_corrections(text: str, patterns: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """OCR崩れであることは明確だが、復元に推測が入る候補（inferred correction candidate）を検出する。
 
     辞書一致による検出のみで、断定的な自動反映は行わない前提。`status: needs_source_check`・
@@ -93,9 +73,11 @@ def detect_inferred_ocr_corrections(text: str) -> list[dict[str, Any]]:
     """
     if not text:
         return []
+    patterns = patterns or default_ocr_patterns()
     candidates = []
-    for wrong, correct in _INFERRED_CORRECTION_DICTIONARY.items():
+    for wrong, info in get_inferred_candidates(patterns).items():
         if wrong in text:
+            correct = info["suggested"]
             candidates.append({
                 "original": wrong,
                 "suggested": correct,
@@ -104,22 +86,23 @@ def detect_inferred_ocr_corrections(text: str) -> list[dict[str, Any]]:
                 "detection_type": "inferred_ocr_correction",
                 "requires_image_check": True,
                 "action": "replace",
-                "confidence": "low",
-                "status": "needs_source_check",
-                "human_note": "推定修正候補。元画像確認推奨。",
+                "confidence": info["confidence"],
+                "status": info["status"],
+                "human_note": info["human_note"],
             })
     return candidates
 
 
-def detect_source_check_required_phrases(text: str) -> list[dict[str, Any]]:
+def detect_source_check_required_phrases(text: str, patterns: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """OCR崩れであることは明確だが、正しい復元が難しい候補（source check required）を検出する。
 
     `suggested`を断定せず、`status: needs_source_check`で元画像確認が必要な候補として提示する。
     """
     if not text:
         return []
+    patterns = patterns or default_ocr_patterns()
     candidates = []
-    for phrase in _SOURCE_CHECK_REQUIRED_PHRASES:
+    for phrase in get_source_check_required(patterns):
         if phrase in text:
             candidates.append({
                 "original": phrase,
@@ -140,51 +123,68 @@ def detect_source_check_required_phrases(text: str) -> list[dict[str, Any]]:
 
 _LATIN_RUN_RE = re.compile(r"[A-Za-z]+(?:[ \t]+[A-Za-z]+)*")
 
-_LATIN_ALLOWLIST = {
-    "url", "sns", "instagram", "canva", "gamma", "chatgpt", "claude",
-    "pdf", "docx", "pptx", "png", "jpg", "jpeg", "webp", "csv", "json", "html", "md", "api",
-    "ai", "llm", "ocr", "ok", "ng", "id", "web", "seo", "qr", "pc",
-    "youtube", "line", "wifi", "wi-fi", "no", "cm", "kg", "app",
-    # システム内部の参照語・レイアウト指示由来の語句（OCR崩れではないため許可語として扱う）
-    "assets", "page", "image", "images", "source_image", "source_assets",
-    "rendered", "output", "input", "editable", "layout", "instruction",
-}
+_DELETE_CANDIDATE_REASON = "日本語教材本文として不自然な英字列であり、削除候補です"
+_DELETE_CANDIDATE_HUMAN_NOTE = "OCRノイズの可能性が高いため、削除候補。元画像確認推奨。"
 
 
-def detect_garbled_latin_sequences(text: str) -> list[dict[str, Any]]:
+def _build_deletion_candidate(original: str, detection_type: str) -> dict[str, Any]:
+    return {
+        "original": original,
+        "suggested": None,
+        "severity": "medium",
+        "reason": _DELETE_CANDIDATE_REASON,
+        "detection_type": detection_type,
+        "requires_image_check": True,
+        "action": "delete",
+        "confidence": "medium",
+        "status": "needs_human_review",
+        "human_note": _DELETE_CANDIDATE_HUMAN_NOTE,
+    }
+
+
+def detect_garbled_latin_sequences(text: str, patterns: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """日本語教材本文として不自然な英字の並びを「削除候補（deletion candidate）」として検出する。
 
-    URL/SNS/Instagram/Canva/PDF/API等の意図的な英語表記を誤検出しないよう、`_LATIN_ALLOWLIST`に
+    URL/SNS/Instagram/Canva/PDF/API等の意図的な英語表記を誤検出しないよう、`allowed_words`に
     一致する語句のみで構成される部分は対象外にする。1文字トークンは列挙記号等と区別できない
-    ため対象外とし、2文字以上のトークンを持つ並びのみ検出する。`_SOURCE_CHECK_REQUIRED_PHRASES`
-    に該当する箇所は`detect_source_check_required_phrases`側の分類に譲り、ここでは扱わない
+    ため対象外とし、2文字以上のトークンを持つ並びのみ検出する。`source_check_required`に
+    該当する箇所は`detect_source_check_required_phrases`側の分類に譲り、ここでは扱わない
     （固有名詞・URLの可能性がある語句を過検出しすぎないよう、断定的な削除候補ではなく
     「削除候補（要人間確認）」として提示し、自動反映はしない）。
+
+    上記の正規表現ベースの検出に加え、`delete_candidates`（config/ocr_patterns.json等で
+    育てられる明示的な削除候補リスト）に一致する語句も検出する（正規表現側で既に検出済みの
+    箇所は重複させない）。
     """
     if not text:
         return []
+    patterns = patterns or default_ocr_patterns()
+    allowed_words = get_allowed_words(patterns)
+    source_check_phrases = get_source_check_required(patterns)
+
     candidates = []
+    seen_originals: set[str] = set()
     for match in _LATIN_RUN_RE.finditer(text):
         run = match.group(0)
         tokens = [t for t in run.split() if len(t) >= 2]
         if not tokens:
             continue
-        if all(t.lower() in _LATIN_ALLOWLIST for t in tokens):
+        if all(t.lower() in allowed_words for t in tokens):
             continue
-        if run in _SOURCE_CHECK_REQUIRED_PHRASES:
+        if run in source_check_phrases:
             continue
-        candidates.append({
-            "original": run,
-            "suggested": None,
-            "severity": "medium",
-            "reason": "日本語教材本文として不自然な英字列であり、削除候補です",
-            "detection_type": "garbled_latin",
-            "requires_image_check": True,
-            "action": "delete",
-            "confidence": "medium",
-            "status": "needs_human_review",
-            "human_note": "OCRノイズの可能性が高いため、削除候補。元画像確認推奨。",
-        })
+        candidates.append(_build_deletion_candidate(run, "garbled_latin"))
+        seen_originals.add(run)
+
+    for phrase in get_delete_candidates(patterns):
+        if phrase in seen_originals:
+            continue
+        if phrase.lower() in allowed_words:
+            continue
+        if phrase in text:
+            candidates.append(_build_deletion_candidate(phrase, "ocr_noise_delete_candidate"))
+            seen_originals.add(phrase)
+
     return candidates
 
 
@@ -203,8 +203,11 @@ _UNUSUAL_SYMBOL_PATTERNS = (
 )
 
 
-def detect_unusual_symbols(text: str) -> list[dict[str, Any]]:
-    """不自然な括弧の始まり・番号崩れ・バックスラッシュ装飾・記号の連続等を検出する。"""
+def detect_unusual_symbols(text: str, patterns: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """不自然な括弧の始まり・番号崩れ・バックスラッシュ装飾・記号の連続等を検出する。
+
+    `patterns`は他の検出器との呼び出し規約を揃えるための引数で、この検出器では使用しない。
+    """
     if not text:
         return []
     candidates = []
@@ -256,14 +259,14 @@ _INCOMPLETE_ENDINGS = (
 _SENTENCE_END_CHARS = "。！？」』）.!?"
 
 
-def detect_incomplete_sentences(text: str) -> list[dict[str, Any]]:
+def detect_incomplete_sentences(text: str, patterns: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """文末が助詞・接続詞で終わっている等、文が途中で切れている可能性がある行を検出する。
 
     行単位ではなく、フィールド末尾（最後の非空行）だけを判定対象にする。次に続く行がある
     場合は「文が途中で切れている」のではなく単に改行を挟んで文が続いているだけのことが多い
     ため（例:「〜ので\nミュートを解除してください」）、誤検出を避けるためフィールドの
     最後の行のみを見る。過検出してもよい前提のため、それでも典型的な未完パターンに一致する
-    ものは候補として出す。
+    ものは候補として出す。`patterns`は呼び出し規約を揃えるための引数で使用しない。
     """
     if not text:
         return []
@@ -300,11 +303,11 @@ _GARBLED_NUMBER_KANA_RE = re.compile(r"(?:[0-9]+[ぁ-んァ-ヶ]{1,3}){2,}[0-9]*
 _DATE_LIKE_RE = re.compile(r"[0-9]{1,4}[ 　]*/[ 　]*[0-9]{1,4}")
 
 
-def _matches_dictionary_entry(snippet: str) -> bool:
-    return any(key in snippet for key in _OCR_MISREAD_DICTIONARY)
+def _matches_dictionary_entry(snippet: str, patterns: dict[str, Any]) -> bool:
+    return any(key in snippet for key in get_high_confidence_replacements(patterns))
 
 
-def detect_suspicious_tokens(text: str) -> list[dict[str, Any]]:
+def detect_suspicious_tokens(text: str, patterns: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """数字と日本語が絡む不自然な表記を、ルールベースでできる範囲で検出する。
 
     - 数字とかな・カタカナがタイトに交互する並び（OCR崩れの可能性が高い）
@@ -315,11 +318,12 @@ def detect_suspicious_tokens(text: str) -> list[dict[str, Any]]:
     """
     if not text:
         return []
+    patterns = patterns or default_ocr_patterns()
     candidates = []
 
     for match in _GARBLED_NUMBER_KANA_RE.finditer(text):
         span = match.group(0)
-        if _matches_dictionary_entry(span):
+        if _matches_dictionary_entry(span, patterns):
             continue
         candidates.append({
             "original": span,
@@ -344,7 +348,7 @@ def detect_suspicious_tokens(text: str) -> list[dict[str, Any]]:
         start = max(0, match.start() - 5)
         end = min(len(text), match.end() + 5)
         snippet = text[start:end].strip()
-        if _matches_dictionary_entry(snippet):
+        if _matches_dictionary_entry(snippet, patterns):
             continue
         candidates.append({
             "original": snippet,
@@ -368,21 +372,25 @@ _DETECTORS = (
 )
 
 
-def analyze_page_ocr_quality(page: LessonPage) -> list[dict[str, Any]]:
+def analyze_page_ocr_quality(page: LessonPage, patterns: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """ページ1件分のOCR品質を検出する。
 
     `title`/`summary`/`body`/`notes`にはOCR本文として全検出器を適用する。`layout_instruction`は
     レイアウト指示・内部参照（`assets`/`page`等）が入ることがありOCR本文ではないため、
     辞書一致（`detect_common_ocr_misreads`）のみを適用する。`title`にはさらに、他の検出器が
     カバーしない記号混入を`detect_title_anomalies`で追加検出する。
+
+    `patterns`（`src/ocr_patterns.py`の`load_ocr_patterns()`が返す辞書）を省略した場合は
+    組み込みデフォルトのみを使用する。
     """
+    patterns = patterns or default_ocr_patterns()
     candidates = []
     for field in _FULL_SCAN_FIELDS:
         text = getattr(page, field, "") or ""
         if not text:
             continue
         for detector in _DETECTORS:
-            for raw in detector(text):
+            for raw in detector(text, patterns):
                 raw = dict(raw)
                 raw["field"] = field
                 candidates.append(raw)
@@ -396,7 +404,7 @@ def analyze_page_ocr_quality(page: LessonPage) -> list[dict[str, Any]]:
         text = getattr(page, field, "") or ""
         if not text:
             continue
-        for raw in detect_common_ocr_misreads(text):
+        for raw in detect_common_ocr_misreads(text, patterns):
             raw = dict(raw)
             raw["field"] = field
             candidates.append(raw)
@@ -438,17 +446,32 @@ def build_correction_candidate(
     }
 
 
-def build_ocr_correction_candidates(document: LessonDocument, source_file: str = "") -> dict[str, Any]:
+def build_ocr_correction_candidates(
+    document: LessonDocument,
+    source_file: str = "",
+    patterns: dict[str, Any] | None = None,
+    patterns_meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """教材全体のOCR補正候補データ（`ocr_correction_candidates.json`相当の構造）を組み立てる。
 
     今回は自動反映を行わない。将来的に`status`を`approved`等に変更したうえで、
-    `apply-ocr-corrections`（未実装）のような機能で`editable/lesson_pages.json`へ
-    反映できるようにするための構造化データとして出力する。
+    `apply-ocr-corrections`のような機能で`editable/lesson_pages.json`へ反映できるように
+    するための構造化データとして出力する。
+
+    `patterns`（`ocr_patterns.load_ocr_patterns()`の戻り値）を省略した場合は組み込み
+    デフォルトのみを使用する。`patterns_meta`は`summary.patterns`に出す読み込み情報
+    （`external_path`/`load_status`）。
     """
+    patterns = patterns or default_ocr_patterns()
+    patterns_meta = patterns_meta or {
+        "external_path": "config/ocr_patterns.json",
+        "load_status": "default_only",
+    }
+
     candidates: list[dict[str, Any]] = []
     counts = {"high": 0, "medium": 0, "low": 0}
     for page_index, page in enumerate(document.pages):
-        for raw in analyze_page_ocr_quality(page):
+        for raw in analyze_page_ocr_quality(page, patterns):
             candidate_id = f"ocr-{len(candidates) + 1:04d}"
             candidate = build_correction_candidate(page, page_index, raw, candidate_id)
             candidates.append(candidate)
@@ -465,6 +488,11 @@ def build_ocr_correction_candidates(document: LessonDocument, source_file: str =
             "high": counts["high"],
             "medium": counts["medium"],
             "low": counts["low"],
+        },
+        "patterns": {
+            "external_path": patterns_meta.get("external_path"),
+            "load_status": patterns_meta.get("load_status"),
+            **patterns_summary(patterns),
         },
         "candidates": candidates,
     }
@@ -559,6 +587,7 @@ def _format_detection_summary_section(candidates: list[dict[str, Any]]) -> str:
         "inferred_ocr_correction": "推定修正候補",
         "source_check_required": "元画像確認が必須の候補",
         "garbled_latin": "意味不明な英字・記号列（削除候補）",
+        "ocr_noise_delete_candidate": "外部辞書由来の削除候補",
         "unusual_symbol": "不自然な記号・番号崩れ",
         "incomplete_sentence": "未完の可能性がある文",
         "spacing": "数字と日本語の不自然な空白",
@@ -805,6 +834,34 @@ def _format_pre_llm_handoff_checklist_section() -> str:
     )
 
 
+def _format_ocr_patterns_section(candidates_data: dict[str, Any]) -> str:
+    info = candidates_data.get("patterns") or {}
+    load_status = info.get("load_status", "default_only")
+    lines = [
+        "## 15. 使用したOCRパターン辞書",
+        "",
+        f"- 外部辞書: `{info.get('external_path', 'config/ocr_patterns.json')}`",
+        f"- 読み込み結果: {load_status}",
+        f"- high_confidence_replacements: {info.get('high_confidence_replacements', 0)}件",
+        f"- delete_candidates: {info.get('delete_candidates', 0)}件",
+        f"- inferred_candidates: {info.get('inferred_candidates', 0)}件",
+        f"- source_check_required: {info.get('source_check_required', 0)}件",
+        f"- allowed_words: {info.get('allowed_words', 0)}件",
+        "",
+    ]
+    if load_status == "loaded":
+        lines.append(
+            "外部辞書が読み込まれ、組み込みデフォルトとマージされています。"
+            "辞書の育て方は`docs/13_ocr_quality_check_workflow.md`を参照してください。"
+        )
+    else:
+        lines.append(
+            "外部辞書（`config/ocr_patterns.json`）が見つからなかったため、組み込みデフォルトの"
+            "みを使用しています。"
+        )
+    return "\n".join(lines)
+
+
 def render_ocr_check_report_markdown(
     document: LessonDocument, candidates_data: dict[str, Any], candidates_output: str = "output/ocr_correction_candidates.json"
 ) -> str:
@@ -830,5 +887,6 @@ def render_ocr_check_report_markdown(
         _format_candidates_json_usage_section(candidates_output),
         _format_correction_workflow_section(),
         _format_pre_llm_handoff_checklist_section(),
+        _format_ocr_patterns_section(candidates_data),
     ]
     return "\n\n".join(sections) + "\n"

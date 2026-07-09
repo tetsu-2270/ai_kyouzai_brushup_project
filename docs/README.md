@@ -16,7 +16,7 @@
 | [`09_editable_regenerate_guide.md`](09_editable_regenerate_guide.md) | **editable編集・再生成ガイド（Phase 10）** | `output/editable/lesson_pages.json`の編集してよい項目・編集しない方がよい項目、`regenerate`の具体例、日本語フォント（`--font-path`）の指定方法・トラブルシューティング |
 | [`11_llm_handoff_workflow.md`](11_llm_handoff_workflow.md) | **LLM手作業投入ワークフロー** | `llm-handoff`コマンドの使い方、ChatGPT/Claude等への貼り付け手順、生成されるMarkdownの内容、LLM出力を`editable/lesson_pages.json`へ反映する運用（自動取り込みは行わない） |
 | [`12_llm_review_apply_workflow.md`](12_llm_review_apply_workflow.md) | **LLM回答の採用判断・反映ワークフロー** | `edit-plan-template`コマンドの使い方、LLM回答をそのまま反映せず採用判断シートに整理する理由、`lesson_pages.json`の編集対象、`regenerate`実行例、再生成後チェックリスト |
-| [`13_ocr_quality_check_workflow.md`](13_ocr_quality_check_workflow.md) | **OCR品質チェック・補正候補データ生成ワークフロー** | `ocr-check`コマンドの使い方、なぜLLM投入前にOCR確認が必要か、`ocr_check_report.md`/`ocr_correction_candidates.json`の読み方、重要度の見方、よくあるOCR誤認識例、システムと人間の役割分担 |
+| [`13_ocr_quality_check_workflow.md`](13_ocr_quality_check_workflow.md) | **OCR品質チェック・補正候補データ生成ワークフロー** | `ocr-check`コマンドの使い方、なぜLLM投入前にOCR確認が必要か、`ocr_check_report.md`/`ocr_correction_candidates.json`の読み方、重要度の見方、よくあるOCR誤認識例、システムと人間の役割分担、`config/ocr_patterns.json`（外部辞書）の育て方 |
 | [`14_apply_ocr_corrections_workflow.md`](14_apply_ocr_corrections_workflow.md) | **承認済みOCR補正候補の反映ワークフロー** | `apply-ocr-corrections`コマンドの使い方、`status: approved`の候補だけを反映する仕組み、元ファイルを上書きしないこと、`ocr_apply_report.md`の読み方、反映されない主な理由 |
 | [`15_llm_suggestion_candidates_workflow.md`](15_llm_suggestion_candidates_workflow.md) | **LLM改善案の構造化候補生成ワークフロー** | `apply-llm-suggestions`コマンドの使い方、LLM回答Markdownの想定形式・表記揺れ対応、`llm_suggestion_candidates.json`の読み方、statusの使い方、将来の`apply-approved-llm-suggestions`へのつながり |
 | [`feedback_template.md`](feedback_template.md) | フィードバックシート（テンプレート） | 実利用テストの結果を記録するチェックリスト。コピーして使う |
@@ -38,6 +38,7 @@
 - **教材の構成チェック・文章のブラッシュアップ案をChatGPT/Claude等にもらいたい** → `11_llm_handoff_workflow.md`（`llm-handoff`コマンド。LLM出力の自動取り込みは行わない）
 - **LLMの改善案をどう`editable/lesson_pages.json`に反映すればよいか迷う** → `12_llm_review_apply_workflow.md`（`edit-plan-template`コマンドで採用判断シートを作ってから手編集する）
 - **`llm-handoff`のLLM回答がOCR誤字の指摘ばかりになる** → `13_ocr_quality_check_workflow.md`（`ocr-check`コマンドでLLM投入前にOCR崩れ候補・修正候補を先に確認する）
+- **実データで新しいOCR崩れパターンを見つけたので辞書に追加したい** → `13_ocr_quality_check_workflow.md`「OCRパターン外部辞書の育て方」（`config/ocr_patterns.json`をコード修正なしで編集する）
 - **OCR補正候補を承認したので`lesson_pages.json`に反映したい** → `14_apply_ocr_corrections_workflow.md`（`apply-ocr-corrections`コマンドで`status: approved`の候補だけを安全に反映する）
 - **ChatGPT/Claude等の改善案をどう`lesson_pages.json`に反映すればよいか迷う** → `15_llm_suggestion_candidates_workflow.md`（`apply-llm-suggestions`コマンドでLLM回答を構造化候補に変換してから採用判断する）
 - **過去のレビュー経緯を知りたい** → `99_implementation_review_brief.md`（ただし現行仕様の正ではない点に注意）

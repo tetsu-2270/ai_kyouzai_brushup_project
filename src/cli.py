@@ -32,6 +32,7 @@ from .ocr_check import (
     render_ocr_check_report_markdown,
     write_correction_candidates_json,
 )
+from .ocr_patterns import load_ocr_patterns
 from .ocr_environment import (
     OCR_REQUIRED_MODES,
     format_environment_report,
@@ -622,6 +623,11 @@ def main() -> None:
         default="output/ocr_correction_candidates.json",
         help="補正候補JSONの出力先（既定: output/ocr_correction_candidates.json）",
     )
+    ocr_check_parser.add_argument(
+        "--ocr-patterns",
+        default=None,
+        help="OCRパターン外部辞書のパス（既定: config/ocr_patterns.json。無ければ組み込みデフォルトのみ使用）",
+    )
 
     apply_ocr_corrections_parser = subparsers.add_parser(
         "apply-ocr-corrections",
@@ -787,7 +793,10 @@ def main() -> None:
             logger.record_generated_file(args.output)
         elif args.command == "ocr-check":
             document = load_lesson_document(args.input)
-            candidates_data = build_ocr_correction_candidates(document, source_file=args.input)
+            patterns, patterns_meta = load_ocr_patterns(args.ocr_patterns)
+            candidates_data = build_ocr_correction_candidates(
+                document, source_file=args.input, patterns=patterns, patterns_meta=patterns_meta
+            )
             write_correction_candidates_json(candidates_data, args.candidates_output)
             validate_generated_file(args.candidates_output, "ocr-check(candidates)")
             write_text(
@@ -795,7 +804,7 @@ def main() -> None:
                 render_ocr_check_report_markdown(document, candidates_data, candidates_output=args.candidates_output),
             )
             validate_generated_file(args.output, "ocr-check")
-            logger.add_section("INPUT", {"input_path": args.input})
+            logger.add_section("INPUT", {"input_path": args.input, "ocr_patterns": patterns_meta})
             logger.add_section("OCR_CHECK", candidates_data["summary"])
             logger.record_generated_file(args.candidates_output)
             logger.record_generated_file(args.output)

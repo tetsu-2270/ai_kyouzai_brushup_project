@@ -1,0 +1,63 @@
+{
+  "version": "1.0",
+  "description": "OCR崩れ検出・修正候補生成に使う外部辞書。コードを変更せずに実データから育てるための設定ファイル。詳細はdocs/13_ocr_quality_check_workflow.mdを参照してください。",
+  "high_confidence_replacements": {
+    "共通説識": "共通認識",
+    "一買": "一貫",
+    "叱嘘激励": "叱咤激励",
+    "アウトブット": "アウトプット",
+    "右労": "苦労",
+    "革細": "些細",
+    "人帳面": "几帳面",
+    "実貴": "実践",
+    "全1 1問": "全11問",
+    "全1 1 問": "全11問",
+    "有崩す": "崩す",
+    "生んな経験": "そんな経験",
+    "どいう": "という",
+    "ベネフィット計理想の未来": "ベネフィット＝理想の未来",
+    "1 つ": {
+      "suggested": "1つ",
+      "severity": "low"
+    }
+  },
+  "delete_candidates": [
+    "ae",
+    "BQ",
+    "Ps",
+    "RSS"
+  ],
+  "inferred_candidates": {
+    "時 9ま1よう": {
+      "suggested": "決めましょう",
+      "confidence": "low",
+      "status": "needs_source_check",
+      "human_note": "推定修正候補。元画像確認推奨。"
+    },
+    "六坂載祭上": {
+      "suggested": "※無断転載禁止",
+      "confidence": "low",
+      "status": "needs_source_check",
+      "human_note": "定型文のOCR崩れの可能性。元画像確認推奨。"
+    }
+  },
+  "source_check_required": [
+    "マチオロウーざん",
+    "ERRh se rel Cee oe",
+    "SAAT こコ全わった"
+  ],
+  "allowed_words": [
+    "Instagram",
+    "SNS",
+    "AI",
+    "URL",
+    "ID",
+    "OK",
+    "NG",
+    "PDF",
+    "JSON",
+    "CSV",
+    "API",
+    "LLM"
+  ]
+}

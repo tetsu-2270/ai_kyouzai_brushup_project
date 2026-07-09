@@ -33,6 +33,7 @@ python3 -m src.cli ocr-check --input output/editable/lesson_pages.json --output 
 - `--input`: `lesson_pages.json`形式（`output/editable/lesson_pages.json`を想定）。
 - `--output`: Markdownレポートの出力先（省略時は`output/ocr_check_report.md`）。
 - `--candidates-output`: 補正候補JSONの出力先（省略時は`output/ocr_correction_candidates.json`）。
+- `--ocr-patterns`: OCRパターン外部辞書のパス（省略時は`config/ocr_patterns.json`。存在しなければ組み込みデフォルトのみ使用）。辞書の育て方は16節を参照。
 
 確認対象は`title`/`summary`/`body`/`notes`/`layout_instruction`です。存在しない項目があってもエラーにはならず、可能な範囲でレポート・候補JSONを生成します。
 
@@ -152,7 +153,9 @@ regenerate で再出力する
 
 ## 8. よくあるOCR誤認識例（検出辞書）
 
-現時点の初期辞書（`src/ocr_check.py`の`_OCR_MISREAD_DICTIONARY`、将来拡張可能）。各エントリは重要度も持っており、内容を大きく損ねない軽微な誤認識（「1 つ → 1つ」）は低重要度にしています：
+これらの辞書は`src/ocr_patterns.py`が管理する**組み込みデフォルト**であり、`config/ocr_patterns.json`（外部辞書）で追加・上書きできます。詳細は16節を参照してください。
+
+高確信度の修正辞書（`high_confidence_replacements`）。各エントリは重要度も持っており、内容を大きく損ねない軽微な誤認識（「1 つ → 1つ」）は低重要度にしています：
 
 - 一買 → 一貫（高）
 - アウトブット → アウトプット（高）
@@ -166,15 +169,19 @@ regenerate で再出力する
 - 有崩す → 崩す（高）
 - 生んな経験 → そんな経験（高）
 - どいう → という（高）
+- ベネフィット計理想の未来 → ベネフィット＝理想の未来（高）
 - 1 つ → 1つ（低）
 
-推定修正候補の辞書（`_INFERRED_CORRECTION_DICTIONARY`。復元に推測が入るため`confidence: low`・`status: needs_source_check`）：
+削除候補の辞書（`delete_candidates`。日本語教材本文として不自然な短い英字ノイズ）：
+
+- ae / BQ / Ps / RSS
+
+推定修正候補の辞書（`inferred_candidates`。復元に推測が入るため`confidence: low`・`status: needs_source_check`）：
 
 - 時 9ま1よう → 決めましょう
-- ベネフィット計理想の未来 → ベネフィット＝理想の未来
 - 六坂載祭上 → ※無断転載禁止
 
-元画像確認が必須の候補（`_SOURCE_CHECK_REQUIRED_PHRASES`。`suggested`は空のまま）：
+元画像確認が必須の候補（`source_check_required`。`suggested`は空のまま）：
 
 - マチオロウーざん
 - ERRh se rel Cee oe
@@ -231,12 +238,81 @@ python3 -m src.cli llm-handoff --input output/editable/lesson_pages.json --outpu
 
 その後は[`docs/11_llm_handoff_workflow.md`](11_llm_handoff_workflow.md)・[`docs/12_llm_review_apply_workflow.md`](12_llm_review_apply_workflow.md)の流れ（ChatGPT/Claude等への投入 →`edit-plan-template`→`regenerate`）に進みます。`edit_plan_template.md`にも、OCR確認が済んでいるかのチェック項目が含まれます。
 
-## 14. 今後の発展の可能性
+## 15. OCRパターン外部辞書（`config/ocr_patterns.json`）の育て方
+
+OCR崩れ検出・修正候補生成に使う辞書（誤認識辞書・削除候補・推定修正候補・元画像確認必須候補・許可語）は、`src/ocr_check.py`のコードに直接埋め込むのではなく、`src/ocr_patterns.py`が管理する組み込みデフォルトと、`config/ocr_patterns.json`（外部辞書）をマージして使う設計になっています。**実データを処理するたびに新しいOCR崩れパターンを見つけても、コードを変更せずに`config/ocr_patterns.json`を編集するだけで辞書を育てられます。**
+
+### 15.1 `config/ocr_patterns.json`が無くても動くこと
+
+`config/ocr_patterns.json`が存在しない場合、`ocr-check`は組み込みデフォルトのみで従来通り動作します。ファイルが存在する場合は、組み込みデフォルトとマージして使用します（`ocr_check_report.md`の「15. 使用したOCRパターン辞書」節で、読み込み結果を確認できます）。
+
+### 15.2 各セクションの意味と育て方
+
+`config/ocr_patterns.json`は以下の5セクションを持ちます。
+
+**`high_confidence_replacements`**（高確信度の修正候補）
+
+```json
+"high_confidence_replacements": {
+  "誤認識文字列": "修正候補",
+  "1 つ": { "suggested": "1つ", "severity": "low" }
+}
+```
+
+修正後がほぼ一意に近い、明確な誤字を追加します。単純な文字列でもよく（重要度は自動的に`high`になります）、内容を大きく損ねない軽微な誤認識は`{"suggested": ..., "severity": "low"}`の形式で重要度を下げられます。外部辞書が既存デフォルトと同じkeyを持つ場合は、外部辞書の値で上書きされます。
+
+**`delete_candidates`**（削除候補）
+
+```json
+"delete_candidates": ["削除候補文字列"]
+```
+
+日本語教材本文として不自然な短い英字ノイズ等を追加します。`allowed_words`に含まれる語句は、`delete_candidates`に入っていても除外されます（許可語が優先）。
+
+**`inferred_candidates`**（推定修正候補）
+
+```json
+"inferred_candidates": {
+  "OCR崩れ文字列": {
+    "suggested": "推定修正候補",
+    "confidence": "low",
+    "status": "needs_source_check",
+    "human_note": "推定修正候補。元画像確認推奨。"
+  }
+}
+```
+
+OCR崩れであることは明確だが、復元に推測が入るものを追加します。`confidence`/`status`/`human_note`は省略可能で、省略時はそれぞれ`low`/`needs_source_check`/「推定修正候補。元画像確認推奨。」になります。
+
+**`source_check_required`**（元画像確認必須の候補）
+
+```json
+"source_check_required": ["元画像確認必須文字列"]
+```
+
+正しい復元が難しい候補を追加します。`suggested`は常に空になります。
+
+**`allowed_words`**（許可語）
+
+```json
+"allowed_words": ["AI", "SNS", "API"]
+```
+
+短い英字ノイズ検出（削除候補）の除外語です。大文字小文字は区別されません（`API`と`api`は同じ扱い）。既存デフォルトの許可語一覧は8節・[`src/ocr_patterns.py`](../src/ocr_patterns.py)を参照してください。
+
+### 15.3 追加時の注意点
+
+- **自動修正しすぎないこと**: `config/ocr_patterns.json`に追加した`high_confidence_replacements`は、`ocr-check`実行時に候補として提示されるだけで、自動的に`editable/lesson_pages.json`へ反映されるわけではありません（`apply-ocr-corrections`で`status: approved`にした候補のみ反映）。
+- **固有名詞・URL・商品名・人名・地名・数値は慎重に扱うこと**: これらは教材ごとに正しい表記が異なるため、`high_confidence_replacements`（断定的な修正候補）に安易に追加せず、`inferred_candidates`や`source_check_required`（元画像確認を促す分類）に入れることを検討してください。
+- 辞書に追加した語句は、追加した教材だけでなく**以後すべての教材**に適用されます。ある教材固有の固有名詞を`delete_candidates`に追加すると、他の教材で同じ語句が正当に使われていても削除候補として提示されてしまう可能性があります。
+- JSONとして不正な場合、`ocr-check`はエラーメッセージ（`OCR pattern config is invalid: config/ocr_patterns.json`）を出して終了します。編集後は`python3 -m json.tool config/ocr_patterns.json`等で構文を確認してください。
+
+## 16. 今後の発展の可能性
 
 将来的には、以下のような発展を検討する余地があります。
 
-- OCR誤認識辞書の拡充・外部化（教材ジャンルごとの辞書切り替え等）
-- 採用済み候補を`editable/lesson_pages.json`へ反映する`apply-ocr-corrections`の実装
+- OCRパターン外部辞書の教材ジャンルごとの切り替え（複数の`config/ocr_patterns_*.json`を使い分ける等）
+- 削除候補（`action: delete`）の`apply-ocr-corrections`での反映対応
 - ローカルLLMを使った、辞書ベースでは検出しきれない誤認識・不自然な表現の検出支援
 
 いずれも今回のスコープには含まれません。詳細な方針は[`docs/07_api_integration_design.md`](07_api_integration_design.md)を参照してください。

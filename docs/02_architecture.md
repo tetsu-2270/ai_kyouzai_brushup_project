@@ -21,6 +21,9 @@ src/
   ocr_check.py                 # lesson_pages.jsonのOCR品質（誤認識・文字化け・不自然な表記）を検出し、
                               # レポート(ocr_check_report.md)と補正候補JSON(ocr_correction_candidates.json)を
                               # 生成。自動修正・自動反映は行わない（詳細はdocs/13参照）
+  ocr_patterns.py               # OCR崩れ検出・修正候補生成に使う辞書（誤認識辞書・削除候補・推定修正候補・
+                              # 元画像確認必須候補・許可語）を管理。組み込みデフォルト＋config/ocr_patterns.json
+                              # （外部辞書、無くても動く）を安全にマージする（詳細はdocs/13参照）
   ocr_apply.py                  # ocr_correction_candidates.jsonのうちstatus: approvedの候補だけを
                               # lesson_pages.jsonへ反映。元ファイルは上書きしない・自動承認はしない
                               # （詳細はdocs/14参照）

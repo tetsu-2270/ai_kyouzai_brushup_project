@@ -12,6 +12,7 @@ from src.ocr_check import (
     detect_unusual_symbols,
     render_ocr_check_report_markdown,
 )
+from src.ocr_patterns import default_ocr_patterns, merge_ocr_patterns
 
 
 def _document(pages: list[LessonPage], mode: str = "proofread") -> LessonDocument:
@@ -358,3 +359,41 @@ def test_report_includes_classification_breakdown():
     assert "deletion candidate" in text
     assert "inferred correction candidate" in text
     assert "source check required" in text
+
+
+# --- OCRパターン外部辞書（config/ocr_patterns.json）との連携 -------------------------------
+
+
+def test_external_pattern_addition_is_candidated_in_candidates_json():
+    """外部辞書で追加した候補がocr_correction_candidates.jsonに出ることを確認する。"""
+    custom_patterns = merge_ocr_patterns(
+        default_ocr_patterns(), {"high_confidence_replacements": {"外部辞書誤字": "外部辞書正字"}}
+    )
+    document = _document([_page(body="外部辞書誤字が含まれる本文です")])
+    data = build_ocr_correction_candidates(document, patterns=custom_patterns)
+    assert any(c["original"] == "外部辞書誤字" and c["suggested"] == "外部辞書正字" for c in data["candidates"])
+
+
+def test_allowed_words_from_external_patterns_suppress_deletion_candidates():
+    """外部辞書のallowed_wordsが、短い英字ノイズの削除候補化を抑制することを確認する。"""
+    custom_patterns = merge_ocr_patterns(default_ocr_patterns(), {"allowed_words": ["ZzNoise"]})
+    candidates = detect_garbled_latin_sequences("これはZzNoiseという製品名です", custom_patterns)
+    assert candidates == []
+
+
+def test_report_includes_pattern_load_info():
+    """ocr_check_report.mdに辞書読み込み情報が出ることを確認する。"""
+    document = _document([_page(body="通常の本文です")])
+    data = build_ocr_correction_candidates(document)
+    text = render_ocr_check_report_markdown(document, data)
+    assert "使用したOCRパターン辞書" in text
+    assert "読み込み結果" in text
+    assert "default_only" in text
+
+
+def test_candidates_json_includes_patterns_summary():
+    document = _document([_page(body="通常の本文です")])
+    data = build_ocr_correction_candidates(document)
+    assert "patterns" in data
+    assert data["patterns"]["load_status"] == "default_only"
+    assert data["patterns"]["high_confidence_replacements"] > 0
