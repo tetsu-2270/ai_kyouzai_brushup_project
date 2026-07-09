@@ -318,6 +318,181 @@ def test_build_all_output_format_all_generates_every_format(tmp_path, monkeypatc
     assert (output_dir / "exports" / "material.md").exists()
 
 
+def test_build_all_clean_output_removes_stale_pages_when_page_count_shrinks(tmp_path, monkeypatch):
+    """前回4ページ→今回2ページのように入力が減った場合、--clean-outputを指定すると
+    古いページの画像・成果物が混在しないことを確認する（本オプションの主眼）。"""
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+
+    _make_source_images(input_dir, count=4)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "build-all",
+            "--input", str(input_dir),
+            "--mode", "proofread",
+            "--output-dir", str(output_dir),
+            "--output-format", "all",
+        ],
+    )
+    main()
+    assert (output_dir / "rendered" / "page_004.png").exists()
+    assert len(json.loads((output_dir / "editable" / "lesson_pages.json").read_text(encoding="utf-8"))["pages"]) == 4
+
+    # 入力を2ページに差し替えて、--clean-output付きで再実行する。
+    for stale in list(input_dir.glob("*.png")):
+        stale.unlink()
+    _make_source_images(input_dir, count=2)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "build-all",
+            "--input", str(input_dir),
+            "--mode", "proofread",
+            "--output-dir", str(output_dir),
+            "--output-format", "all",
+            "--clean-output",
+        ],
+    )
+    main()
+
+    data = json.loads((output_dir / "editable" / "lesson_pages.json").read_text(encoding="utf-8"))
+    assert len(data["pages"]) == 2
+    assert (output_dir / "rendered" / "page_001.png").exists()
+    assert (output_dir / "rendered" / "page_002.png").exists()
+    assert not (output_dir / "rendered" / "page_003.png").exists()
+    assert not (output_dir / "rendered" / "page_004.png").exists()
+
+
+def test_build_all_without_clean_output_flag_preserves_stale_files(tmp_path, monkeypatch):
+    """--clean-outputを指定しない場合は、従来どおり上書きのみで挙動が変わらないことを確認する
+    （既定では自動削除しない）。"""
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+
+    _make_source_images(input_dir, count=4)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "build-all",
+            "--input", str(input_dir),
+            "--mode", "proofread",
+            "--output-dir", str(output_dir),
+            "--output-format", "all",
+        ],
+    )
+    main()
+    assert (output_dir / "rendered" / "page_004.png").exists()
+
+    for stale in list(input_dir.glob("*.png")):
+        stale.unlink()
+    _make_source_images(input_dir, count=2)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "build-all",
+            "--input", str(input_dir),
+            "--mode", "proofread",
+            "--output-dir", str(output_dir),
+            "--output-format", "all",
+        ],
+    )
+    main()
+
+    # --clean-outputなしなので、前回分の古いページ画像がそのまま残る（既存挙動を維持）。
+    assert (output_dir / "rendered" / "page_003.png").exists()
+    assert (output_dir / "rendered" / "page_004.png").exists()
+
+
+def test_build_all_clean_output_does_not_delete_input_directory(tmp_path, monkeypatch):
+    """--clean-outputを指定しても、--inputに渡したディレクトリ（input/）自体は削除されないことを
+    確認する。"""
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    _make_source_images(input_dir, count=2)
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "build-all",
+            "--input", str(input_dir),
+            "--mode", "proofread",
+            "--output-dir", str(output_dir),
+            "--output-format", "all",
+            "--clean-output",
+        ],
+    )
+    main()
+
+    assert input_dir.exists()
+    assert list(input_dir.glob("*.png"))
+
+
+def test_build_all_clean_output_preserves_unknown_manual_files_in_output_dir(tmp_path, monkeypatch):
+    """output-dir配下にある、システムが生成したものではない手動ファイルは--clean-outputでも
+    削除されないことを確認する（既知の生成物のみを対象にする仕様）。"""
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    _make_source_images(input_dir, count=2)
+    output_dir.mkdir(parents=True)
+    manual_note = output_dir / "my_manual_notes.txt"
+    manual_note.write_text("作成者が置いたメモ", encoding="utf-8")
+    manual_dir = output_dir / "my_manual_dir"
+    manual_dir.mkdir()
+    (manual_dir / "keep.txt").write_text("keep", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "build-all",
+            "--input", str(input_dir),
+            "--mode", "proofread",
+            "--output-dir", str(output_dir),
+            "--output-format", "all",
+            "--clean-output",
+        ],
+    )
+    main()
+
+    assert manual_note.exists()
+    assert (manual_dir / "keep.txt").exists()
+    assert (output_dir / "editable" / "lesson_pages.json").exists()
+
+
+def test_build_all_clean_output_removes_legacy_phase8_root_level_files(tmp_path, monkeypatch):
+    """Phase 8時点のbuild-allがoutput_dir直下に直接生成していた旧仕様の完成output
+    （lesson_pages.json/canva_design.md/brushup.md/brushup.docx/brushup.pdf）が、
+    output/compat/配下の現行版と紛らわしいまま残らないよう、--clean-outputで削除されることを
+    確認する。"""
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    _make_source_images(input_dir, count=2)
+    output_dir.mkdir(parents=True)
+    legacy_names = ["lesson_pages.json", "canva_design.md", "brushup.md", "brushup.docx", "brushup.pdf"]
+    for name in legacy_names:
+        (output_dir / name).write_text("legacy content from an old build-all run", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "build-all",
+            "--input", str(input_dir),
+            "--mode", "proofread",
+            "--output-dir", str(output_dir),
+            "--output-format", "all",
+            "--clean-output",
+        ],
+    )
+    main()
+
+    for name in legacy_names:
+        assert not (output_dir / name).exists()
+    # 現行版はoutput/compat/配下に生成される（引き続き既定で有効）。
+    assert (output_dir / "compat" / "lesson_pages.json").exists()
+    assert (output_dir / "compat" / "canva_design.md").exists()
+    assert (output_dir / "compat" / "brushup.md").exists()
+
+
 def test_build_all_output_format_pdf_pptx_docx_md_individually(tmp_path, monkeypatch):
     source_dir = tmp_path / "source"
     _make_source_images(source_dir, count=1)
@@ -1687,6 +1862,7 @@ def test_ocr_check_cli_custom_candidates_output_path(tmp_path, monkeypatch):
     main()
 
     custom_candidates_path = tmp_path / "custom_candidates.json"
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         "sys.argv",
         [

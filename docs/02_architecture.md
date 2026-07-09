@@ -38,7 +38,15 @@ src/
   edit_plan.py                 # LLM改善案の採用判断シート（edit_plan_template.md）を生成。LLM回答を
                               # そのまま反映せず、採用判断を整理してから手編集する運用を支援（詳細はdocs/12参照）
   import_source.py           # 元資料(画像/PDF/PPTX)からのテキスト・画像自動取り込み（imported_pages.json+画像アセット生成）。
-                              # 画像取り込み時、ocr_environment.pyでOCR環境を事前診断（Phase 10.1）
+                              # 画像取り込み時、ocr_environment.pyでOCR環境を事前診断（Phase 10.1）。
+                              # ファイル名は数字部分を数値として比較する自然順ソートで並べる（例: "- 2" が "- 10" より前）
+  output_clean.py             # build-all --clean-output用。output-dir配下の既知の生成物（assets/・editable/・
+                              # compat/・scenario/・rendered/・exports/・canva/・imported_pages.json・
+                              # review_report.md・ocr_check_report.md・ocr_correction_candidates.json・
+                              # llm_handoff.md、およびPhase 8時点の旧仕様output lesson_pages.json・
+                              # canva_design.md・brushup.md・brushup.docx・brushup.pdf）だけを安全に削除して
+                              # から再生成する。output-dirがプロジェクトディレクトリ配下または/tmp配下である
+                              # こと等を検証し、条件を満たさない場合は削除しない
   ocr_environment.py          # OCR実行に必要なtesseract/日本語言語データ/Homebrewの診断（PATHに無いだけか、
                               # そもそも無いかを切り分け）・診断レポート/警告メッセージ生成（Phase 10.1）
   execution_logger.py         # CLI実行ログ(logs/YYYYMMDD_HHMMSS_<command>.log)の生成。開始/終了時刻・

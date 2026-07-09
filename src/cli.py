@@ -39,6 +39,7 @@ from .ocr_check import (
     write_correction_candidates_json,
 )
 from .ocr_patterns import load_ocr_patterns
+from .output_clean import clean_known_outputs
 from .ocr_environment import (
     OCR_REQUIRED_MODES,
     format_environment_report,
@@ -338,6 +339,7 @@ def build_all(
     compat_output: bool = True,
     font_path: str | None = None,
     allow_empty_ocr: bool = False,
+    clean_output: bool = False,
     logger: ExecutionLogger | None = None,
 ) -> None:
     """元資料(画像/PDF/PPTX)から成果物一式を一括生成する（build-allコマンドの本体）。
@@ -364,11 +366,31 @@ def build_all(
 
     取り込みページが0件、または指定したoutput-formatの成果物が生成されない場合も、実質失敗を
     正常終了扱いにしないためエラーにする（Phase 10.2）。
+
+    `clean_output=True`（`--clean-output`）を指定すると、取り込み・生成を行う**前**に、
+    `output_dir`配下の既知の生成物（`assets/`・`editable/`・`compat/`・`scenario/`・`rendered/`・
+    `exports/`・`canva/`・`imported_pages.json`・`review_report.md`・`ocr_check_report.md`・
+    `ocr_correction_candidates.json`・`llm_handoff.md`、および`output_dir`直下に残り得るPhase 8
+    時点の旧仕様output`lesson_pages.json`・`canva_design.md`・`brushup.md`・`brushup.docx`・
+    `brushup.pdf`）だけを削除する。前回より少ないページ数で再生成した場合に、前回分の古いページ画像・
+    成果物が混在するのを防ぐためのオプションで、既定は無効（従来どおり上書きのみ）。
+    `output_dir`配下の未知の手動ファイルには一切触れない。
+    安全のため`output_dir`がプロジェクトディレクトリ配下または`/tmp`配下であること等を検証し、
+    条件を満たさない場合は削除を行わずエラーにする（詳細は`src/output_clean.py`参照）。
     """
     output_dir = Path(output_dir)
     assets_dir = output_dir / "assets"
     imported_pages_path = output_dir / "imported_pages.json"
     input_kind = _detect_input_kind(input_path)
+
+    if clean_output:
+        clean_result = clean_known_outputs(output_dir)
+        if logger:
+            logger.add_section("CLEAN_OUTPUT", {
+                "output_dir": str(output_dir),
+                "removed": clean_result["removed"],
+                "skipped": clean_result["skipped"],
+            })
 
     if logger:
         logger.add_section("INPUT", {
@@ -377,6 +399,7 @@ def build_all(
             "mode": mode,
             "output_format": output_format,
             "output_dir": str(output_dir),
+            "clean_output": clean_output,
         })
 
     # 画像inputの場合、OCR関連の警告は_validate_ocr_precondition()側で集約して表示するため、
@@ -523,6 +546,21 @@ def main() -> None:
             "画像input+proofread/restructureでOCRが実質使えない場合（Tesseract未導入・"
             "日本語言語データ無し・全ページOCR結果が空）でも、エラー終了せず空データのまま処理を"
             "続行する（既定は無効＝エラー終了する。テスト・開発用途向け）"
+        ),
+    )
+    build_all_parser.add_argument(
+        "--clean-output",
+        action="store_true",
+        default=False,
+        help=(
+            "取り込み・生成の前に、--output-dir配下の既知の生成物（assets/・editable/・compat/・"
+            "scenario/・rendered/・exports/・canva/・imported_pages.json・review_report.md・"
+            "ocr_check_report.md・ocr_correction_candidates.json・llm_handoff.md、およびPhase 8"
+            "時点の旧仕様output lesson_pages.json・canva_design.md・brushup.md・brushup.docx・"
+            "brushup.pdf）を削除してから再生成する（既定は無効＝従来どおり上書きのみ）。"
+            "前回より少ないページ数で再生成した際に、前回分の古い成果物が混在するのを防ぐためのオプション。"
+            "output-dir配下の未知の手動ファイルは削除しない。"
+            "output-dirがプロジェクトディレクトリ配下または/tmp配下でない場合はエラーにする"
         ),
     )
 
@@ -782,7 +820,7 @@ def main() -> None:
             build_all(
                 args.input, args.mode, args.output_dir, args.requirements,
                 args.output_format, args.compat_output, args.font_path,
-                args.allow_empty_ocr, logger=logger,
+                args.allow_empty_ocr, args.clean_output, logger=logger,
             )
         elif args.command == "regenerate":
             regenerate(args.input, args.output_format, args.output_dir, args.font_path, logger=logger)

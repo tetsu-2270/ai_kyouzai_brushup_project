@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -13,6 +14,16 @@ from .ocr_environment import (
 )
 
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+
+
+def _natural_sort_key(name: str) -> list[Any]:
+    """ファイル名中の数字を数値として比較するためのソートキー。
+
+    "page - 2.jpeg" が "page - 10.jpeg" より前に来るよう、単純な文字列比較（"1" < "10" < "2"）
+    ではなく数値として比較する。iPhone写真アプリ等の連番書き出し名（例:
+    「おとすた講座１ - 1.jpeg」〜「おとすた講座１ - 52.jpeg」）で正しいページ順を得るために必要。
+    """
+    return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", name)]
 
 
 def _try_ocr(image_path: Path, ocr_status: dict[str, Any]) -> str:
@@ -98,7 +109,7 @@ def import_images(
     if not ocr_status["ocr_ready"] and not quiet:
         print(format_precondition_warning(ocr_status), file=sys.stderr)
 
-    sorted_paths = sorted(image_paths, key=lambda p: p.name)
+    sorted_paths = sorted(image_paths, key=lambda p: _natural_sort_key(p.name))
     pages = [
         _page_from_image(index, path, assets_dir, ocr_status)
         for index, path in enumerate(sorted_paths, start=1)

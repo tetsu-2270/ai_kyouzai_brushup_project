@@ -27,6 +27,45 @@ def test_import_images_assigns_page_no_in_filename_order(tmp_path):
     assert titles_or_names == ["assets/page_001.png", "assets/page_002.png", "assets/page_003.png"]
 
 
+def test_import_images_orders_numeric_suffixes_naturally(tmp_path):
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    # iPhone写真アプリ等の連番書き出し名を想定。単純な文字列ソートだと
+    # "...- 1" -> "...- 10" -> "...- 11" -> "...- 2" の順になってしまうため、
+    # 数値として比較する自然順ソートで 1, 2, ..., 11 の順になることを確認する。
+    numbers = (1, 2, 9, 10, 11)
+    for n in numbers:
+        # サイズを変えて内容を区別できるようにし、コピー順の検証に使えるようにする。
+        _make_image(source_dir / f"おとすた講座１ - {n}.jpeg", size=(80 + n, 120))
+
+    assets_dir = tmp_path / "assets"
+    result = import_source(source_dir, assets_dir)
+
+    page_nos = [page["page_no"] for page in result["pages"]]
+    assert page_nos == [1, 2, 3, 4, 5]
+    source_images = [page["source_image"] for page in result["pages"]]
+    assert source_images == [
+        "assets/page_001.jpeg",
+        "assets/page_002.jpeg",
+        "assets/page_003.jpeg",
+        "assets/page_004.jpeg",
+        "assets/page_005.jpeg",
+    ]
+    # 元ファイルとの対応（1, 2, 9, 10, 11の順）を、コピー元バイト列の一致で確認する。
+    expected_order = [
+        source_dir / "おとすた講座１ - 1.jpeg",
+        source_dir / "おとすた講座１ - 2.jpeg",
+        source_dir / "おとすた講座１ - 9.jpeg",
+        source_dir / "おとすた講座１ - 10.jpeg",
+        source_dir / "おとすた講座１ - 11.jpeg",
+    ]
+    for dest_name, src_path in zip(
+        ("page_001.jpeg", "page_002.jpeg", "page_003.jpeg", "page_004.jpeg", "page_005.jpeg"),
+        expected_order,
+    ):
+        assert (assets_dir / dest_name).read_bytes() == src_path.read_bytes()
+
+
 def test_import_images_copies_original_files_into_assets_dir(tmp_path):
     source_dir = tmp_path / "source"
     source_dir.mkdir()

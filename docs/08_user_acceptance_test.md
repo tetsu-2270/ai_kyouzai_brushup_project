@@ -87,6 +87,23 @@ python3 -m src.cli build-all \
 | `json` | なし（`editable/lesson_pages.json`のみ） | 中間ファイルだけ欲しい・後で`regenerate`する場合 |
 | `all` | 上記すべて | どの形式が使えそうか一通り見比べたい場合 |
 
+### 1.4 元資料を差し替えて最初から作り直す（`--clean-output`）
+
+`input/source`の元資料を差し替えて`build-all`を再実行すると、既定では前回の生成物に**上書き**されます。前回より少ないページ数（例: 52ページ→13ページ）に差し替えた場合、上書きだけでは`output/rendered/page_014.png`以降のような古いページの成果物が消えずに残り、今回の教材に存在しないページの画像・ファイルが混在してしまいます。
+
+元資料を差し替えて最初から作り直す場合は、`--clean-output`を付けてください。
+
+```bash
+python3 -m src.cli build-all \
+  --input input/source \
+  --mode proofread \
+  --output-dir output \
+  --output-format all \
+  --clean-output
+```
+
+`--clean-output`は、取り込み・生成の**前**に`output_dir`配下の既知の生成物（`assets/`・`editable/`・`compat/`・`scenario/`・`rendered/`・`exports/`・`canva/`・`imported_pages.json`・`review_report.md`・`ocr_check_report.md`・`ocr_correction_candidates.json`・`llm_handoff.md`、および`output_dir`直下に残り得るPhase 8時点の旧仕様output`lesson_pages.json`・`canva_design.md`・`brushup.md`・`brushup.docx`・`brushup.pdf`）だけを削除してから再生成します。`output_dir`配下に手作業で置いたファイル・メモ等には触れません。既定では無効（従来どおり上書きのみ）です。詳細は[`README.md`](../README.md)「元資料から成果物一式を一括生成（`build-all`）」を参照してください。
+
 `--output-format`の指定に関わらず、`output/editable/lesson_pages.json`は常に生成されます。**正式な編集対象は`output/editable/lesson_pages.json`のみ、正式なCanva指示書は`output/canva/canva_design.md`のみ、正式な完成output（Markdown/DOCX/PDF/PPTX）は`output/exports/material.*`のみです。** `output/`直下には、通常ユーザーが使う完成outputを置きません。Phase 8時点の`lesson_pages.json`/`canva_design.md`/`brushup.md`/`brushup.docx`/`brushup.pdf`は、後方互換が必要な場合に`output/compat/`配下へまとめて生成します（`--no-compat-output`で無効化できます）。`output/scenario/`・`output/review_report.md`は正式outputとの役割重複が無いため、引き続き`output/`直下に生成されます。
 
 ### 1.4 editable中間ファイルを編集して再生成する（`regenerate`）
