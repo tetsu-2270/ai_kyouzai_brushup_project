@@ -72,8 +72,31 @@ def write_text(path: str | Path, text: str) -> None:
     output_path.write_text(text, encoding="utf-8")
 
 
+def _summarize_ocr_quality_diagnostics(diagnostics: list[dict[str, object]]) -> dict[str, object]:
+    """画像取り込み時のOCR品質診断（`import_source.py`の`diagnostics_sink`）を、
+    実行ログへ記録しやすい要約に変換する。詳細はページごとの辞書のまま記録し、
+    通常画面へ過度に詳細を表示しないよう、要約のみを主要フィールドとして扱う。
+    """
+    if not diagnostics:
+        return {}
+    scores = [d["score"] for d in diagnostics if isinstance(d.get("score"), (int, float))]
+    needs_review = [d["page_no"] for d in diagnostics if d.get("quality") == "needs_review"]
+    retried = [d["page_no"] for d in diagnostics if d.get("retried")]
+    return {
+        "pages_diagnosed": len(diagnostics),
+        "needs_review_pages": needs_review,
+        "retried_pages": retried,
+        "average_score": round(sum(scores) / len(scores), 4) if scores else None,
+        "pages": diagnostics,
+    }
+
+
 def run_import_source(
-    input_path: str, output_path: str | Path, assets_dir: str | Path | None = None, quiet: bool = False
+    input_path: str,
+    output_path: str | Path,
+    assets_dir: str | Path | None = None,
+    quiet: bool = False,
+    logger: ExecutionLogger | None = None,
 ) -> dict[str, object]:
     """元資料(画像/PDF/PPTX)からimported_pages.json互換のJSONを生成して書き出す。
 
@@ -83,11 +106,18 @@ def run_import_source(
     自前の集約済みエラー/警告を表示する場合に、`import_source()`側の重複表示を避けるため。
     Phase 10.2追加修正）。単体の`import-source`コマンドからは指定しない（既定False、
     従来どおりここで警告を表示する）。
+
+    `logger`を渡すと、画像取り込み時のOCR品質診断（選択PSM・前処理・品質スコア・再試行有無等。
+    `src/ocr_engine.py`参照）を`OCR_QUALITY`セクションとして実行ログへ記録する
+    （`imported_pages.json`のスキーマ自体には影響しない）。
     """
     output_path = Path(output_path)
     resolved_assets_dir = Path(assets_dir) if assets_dir else output_path.parent / "assets"
-    imported = import_source(input_path, resolved_assets_dir, quiet=quiet)
+    diagnostics_sink: list[dict[str, object]] = [] if logger else None
+    imported = import_source(input_path, resolved_assets_dir, quiet=quiet, diagnostics_sink=diagnostics_sink)
     write_text(output_path, json.dumps(imported, ensure_ascii=False, indent=2) + "\n")
+    if logger and diagnostics_sink:
+        logger.add_section("OCR_QUALITY", _summarize_ocr_quality_diagnostics(diagnostics_sink))
     return imported
 
 
@@ -404,7 +434,9 @@ def build_all(
 
     # 画像inputの場合、OCR関連の警告は_validate_ocr_precondition()側で集約して表示するため、
     # import_source()側の重複表示をquiet=Trueで抑制する（Phase 10.2追加修正）。
-    imported = run_import_source(input_path, imported_pages_path, assets_dir, quiet=(input_kind == "image"))
+    imported = run_import_source(
+        input_path, imported_pages_path, assets_dir, quiet=(input_kind == "image"), logger=logger
+    )
     pages = imported.get("pages", [])
 
     if logger:
@@ -811,7 +843,7 @@ def main() -> None:
             })
             print(format_environment_report(ocr_status))
         elif args.command == "import-source":
-            imported = run_import_source(args.input, args.output, args.assets_dir)
+            imported = run_import_source(args.input, args.output, args.assets_dir, logger=logger)
             logger.add_section("INPUT", {"input_path": args.input})
             logger.add_section("INPUT_RESULT", {"pages": len(imported.get("pages", []))})
             validate_generated_json_pages(args.output, len(imported.get("pages", [])), "import-source")

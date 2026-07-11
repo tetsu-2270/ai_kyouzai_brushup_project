@@ -205,6 +205,10 @@ bash scripts/check_ocr_env.sh
 
 `tesseract`/日本語言語データ(`jpn`)/Homebrewが、PATH上にあるか・既知のインストール先（macOSなら`/opt/homebrew/bin/`または`/usr/local/bin/`）にあるだけか・そもそも無いかを切り分けて表示します。
 
+### OCR品質について
+
+大見出し・本文・グラフ・注記が混在する教材画像でも、`src/ocr_engine.py`が複数の前処理・複数PSM・品質スコアによる最良候補選択と、低品質時のみの再試行を行い、単純な`pytesseract.image_to_string()`呼び出しより明らかな誤認識・ノイズ（英字ノイズ・不自然なタイトル等）を減らします。ただし、Tesseract自体が誤認識する文字は完全には無くならないため、`ocr-check`で残った崩れを確認する運用は引き続き推奨します（詳細は[`docs/13_ocr_quality_check_workflow.md`](13_ocr_quality_check_workflow.md)参照）。
+
 ### 6.2 よくある状態と対処
 
 | 状態 | 対処 |

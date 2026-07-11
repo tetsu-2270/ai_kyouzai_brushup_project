@@ -63,15 +63,17 @@ python3 -m src.cli generate --input output/lesson_pages.json --output output/bru
 
 または、READMEに記載された最新の実行方法（`bash scripts/run_sample.sh`）に従う。
 
-## 7.5 検証結果をエビデンスとして残す
+## 7.5 検証結果をエビデンスとして残し、完了レポートへまとめる
 
-`pytest`・`run_sample.sh`をばらばらに実行して画面出力を貼るのではなく、正式な検証入口を実行してエビデンスを残す。
+`pytest`・`run_sample.sh`をばらばらに実行して画面出力を貼るのではなく、正式な検証入口を実行する。
 
 ```bash
 bash scripts/run_verification.sh --purpose "<今回の作業内容>"
 ```
 
-結果は`logs/evidence/<run_id>/`（`manifest.json`/`summary.md`/コマンドログ/JUnit XML）へ保存される。過去の実行結果は上書きされない。Codex（設計担当）は、この保存済みエビデンス（`logs/evidence/latest.json`が指す最新結果）を直接確認し、対象コミット・作業ツリー状態が一致する限り同じ検証を再実行しない。詳細は[`PROJECT_RULES.md`](../PROJECT_RULES.md)「9. このプロジェクトの正式な検証入口とエビデンス保存先」・[`docs/04_output_spec.md`](04_output_spec.md)「検証エビデンス」を参照。
+結果は`logs/evidence/<run_id>/`（`manifest.json`/`summary.md`/コマンドログ/JUnit XML）へ保存される。過去の実行結果は上書きされない。
+
+**Codex（設計担当）への主な報告手段は、このエビデンスそのものではなく、`CLAUDE_RULES.md`のテンプレートに沿ったClaude Codeの自己完結した完了レポートである。** エビデンスは補助確認手段であり、Codexはレポート内に矛盾・不足・重大な懸念がある場合だけ`logs/evidence/latest.json`が指す最新結果を追加確認する。詳細は[`PROJECT_RULES.md`](../PROJECT_RULES.md)「9. このプロジェクトの正式な検証入口とエビデンス保存先」・`~/ai-development-rules/DEVELOPMENT_RULES.md`「6. Claude Code完了レポート（主確認手段）」「7. エビデンス（補助確認手段）」・[`docs/04_output_spec.md`](04_output_spec.md)「検証エビデンス」を参照。
 
 ## 8. 完成時の指示
 

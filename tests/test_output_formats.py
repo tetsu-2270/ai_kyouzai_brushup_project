@@ -1053,6 +1053,38 @@ def test_build_all_writes_log_file_on_failure(tmp_path, monkeypatch):
     assert "Tesseract" in text
 
 
+def test_build_all_logs_ocr_quality_diagnostics(tmp_path, monkeypatch):
+    """build-all実行ログに、選択したOCR前処理・PSM・品質スコア・要確認ページ等の
+    OCR_QUALITYセクションが記録されることを確認する（画面へは詳細を出さず、ログで確認できる
+    という要件に対応）。"""
+    import src.import_source as import_source_module
+    from src.ocr_engine import OcrDiagnostics
+
+    def fake_try_ocr(image_path, ocr_status):
+        import_source_module._last_ocr_diagnostics = OcrDiagnostics(
+            preprocess="enhanced", psm=6, score=0.42, quality="needs_review", retried=True
+        )
+        return "テスト用OCRテキスト"
+
+    monkeypatch.setattr(import_source_module, "_try_ocr", fake_try_ocr)
+
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir, count=1)
+    output_dir = tmp_path / "output"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "build-all", "--input", str(source_dir), "--mode", "proofread", "--output-dir", str(output_dir)],
+    )
+    main()
+
+    log_files = list(_log_dir(monkeypatch).glob("*_build-all.log"))
+    assert len(log_files) == 1
+    text = log_files[0].read_text(encoding="utf-8")
+    assert "OCR_QUALITY" in text
+    assert "needs_review" in text
+    assert "enhanced" in text
+
+
 def test_lesson_pages_generate_mode_writes_log_named_generate(tmp_path, monkeypatch):
     """lesson-pages --mode generateの実行ログが、モード名(generate)でファイル名になることを確認する。"""
     output_path = tmp_path / "output" / "editable" / "lesson_pages.json"
@@ -1238,7 +1270,11 @@ def test_import_source_cli_fails_when_imported_pages_are_empty(tmp_path, monkeyp
     """
     import src.cli as cli_module
 
-    monkeypatch.setattr(cli_module, "import_source", lambda input_path, assets_dir, quiet=False: {"pages": []})
+    monkeypatch.setattr(
+        cli_module,
+        "import_source",
+        lambda input_path, assets_dir, quiet=False, diagnostics_sink=None: {"pages": []},
+    )
 
     dummy_input = tmp_path / "dummy.pptx"
     dummy_input.write_bytes(b"dummy")

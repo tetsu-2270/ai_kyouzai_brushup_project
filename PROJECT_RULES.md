@@ -54,6 +54,7 @@ output/
 
 - 画像inputの取り込みにはOS側のtesseract本体・日本語言語データが必要（`brew install tesseract tesseract-lang`）。`python3 -m src.cli check-ocr`で事前診断できる。
 - `build-all --mode proofread/restructure`は、画像inputでOCRが実質使えない場合（Tesseract未導入・日本語言語データ無し・全ページOCR結果が空）、警告のうえ空データで成功させず、エラー終了する（`--allow-empty-ocr`でスキップ可。テスト・開発用途向け）。
+- 画像1枚のOCR自体は`src/ocr_engine.py`が担当する。複数前処理（原画像/拡大+グレースケール+コントラスト補正+シャープ化/二値化）・複数PSM（6/11）・信頼度/座標付き結果からの品質スコアによる最良候補選択・低品質時のみの追加前処理/領域分割再試行・ノイズ除去・辞書補正を行い、教材画像全般の取り込み時OCR品質を底上げする（詳細は[`docs/02_architecture.md`](docs/02_architecture.md)「`src/ocr_engine.py`」参照）。Tesseract自体の限界により誤認識が完全に無くなるわけではない。
 - OCR崩れの検出・修正候補生成は`ocr-check`、候補の一括承認は`approve-ocr-candidates`、反映は`apply-ocr-corrections`が担当する。自動承認・自動反映（画像から確定できない内容の推測）は行わない。詳細は[`docs/13_ocr_quality_check_workflow.md`](docs/13_ocr_quality_check_workflow.md)〜[`docs/15_llm_suggestion_candidates_workflow.md`](docs/15_llm_suggestion_candidates_workflow.md)参照。
 
 ## 6. input・output・logs・生成物のGit管理方針
@@ -101,7 +102,29 @@ bash scripts/run_verification.sh --purpose "<今回の検証目的>"
 logs/evidence/latest.json
 ```
 
-設計担当エージェント（Codex）は、まずこのファイルと対応する`manifest.json`/`summary.md`を確認し、対象コミット・作業ツリー状態・実行内容が一致する場合は同じ検証を再実行しない（合否基準は`~/ai-development-rules/DEVELOPMENT_RULES.md`「ローカル開発の合否基準」を参照。dirty状態だけを理由に不合格・再実行にしない）。詳細仕様は[`docs/04_output_spec.md`](docs/04_output_spec.md)「検証エビデンス」を参照。
+**主確認手段はClaude Codeの完了レポートであり、このエビデンスは補助確認手段である**（`~/ai-development-rules/DEVELOPMENT_RULES.md`「6. Claude Code完了レポート（主確認手段）」「7. エビデンス（補助確認手段）」を正とする）。設計担当エージェント（Codex）は、まずユーザーから貼られた完了レポート（後述のHTML Artifactのコピー内容）を確認し、レポートが自己完結していれば原則としてこのエビデンスを追加確認しない。レポート内の矛盾・完了条件対応の不明・テスト結果不足等がある場合だけ、このファイルと対応する`manifest.json`/`summary.md`を確認し、対象コミット・作業ツリー状態・実行内容が一致する場合は同じ検証を再実行しない（合否基準は`~/ai-development-rules/DEVELOPMENT_RULES.md`「8. ローカル開発の合否基準」を参照。dirty状態だけを理由に不合格・再実行にしない）。詳細仕様は[`docs/04_output_spec.md`](docs/04_output_spec.md)「検証エビデンス」を参照。
+
+### 9.1 完了レポートのHTML Artifact化と保存先
+
+Claude Codeの完了報告は、`CLAUDE_RULES.md`のMarkdownテンプレートを、コピー用ボタン付きの自己完結型HTML Artifactとして出力する（`~/ai-development-rules/DEVELOPMENT_RULES.md`「6.5 出力形式（HTML Artifact）」参照）。生成には既存の再利用可能モジュール`src/completion_report.py`を使う（新規実装しない）。
+
+```bash
+python3 -m src.completion_report \
+  --work-name "<今回の作業名>" \
+  --judgment "完了" \
+  --markdown-file <完了レポートMarkdownのファイルパス>
+```
+
+保存先は次のとおり（`output/`配下のため既存の`.gitignore`により自動的にGit管理対象外）。
+
+```text
+output/reports/YYYYMMDD_HHMMSS_claude_completion_report.html   # 実行ごとに新規生成。過去分は上書きしない
+output/reports/latest_claude_completion_report.html            # 最新レポートの複製。毎回更新
+```
+
+- `output/reports/`（Claude Code完了報告のHTML Artifact）と`logs/evidence/`（テスト実行の証跡）は別物である。`output/reports/`はCodexへ渡す完了報告そのもの、`logs/evidence/`はその裏付けとなる補助エビデンスという役割分担にする。
+- Artifactを生成するためだけに、正式な検証（`bash scripts/run_verification.sh`）を再実行しない。検証は1回実行し、その結果をレポート本文へ要約してからArtifact化する。
+- チャット本文には、判定・Artifactの保存先（タイムスタンプ付き・latest両方のパス）・エビデンス保存先だけを短く報告する。長いレポート全文をチャット本文へ重複して貼らない。
 
 ## 10. このプロジェクト固有の禁止事項・制限事項
 

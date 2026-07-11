@@ -37,7 +37,7 @@
 - **`output/editable/lesson_pages.json`を編集して再生成したい・日本語フォントの文字化けを直したい** → `09_editable_regenerate_guide.md`
 - **画像取り込み後にテキストが空になる・OCRがうまくいかない・`build-all --mode proofread`がエラー終了する** → `python3 -m src.cli check-ocr`または`bash scripts/check_ocr_env.sh`で診断（`04_output_spec.md`「OCR前提の事前チェック」、`08_user_acceptance_test.md`「OCRについての注意」参照）
 - **なぜエラーになったか・実行内容を後から確認したい** → `logs/YYYYMMDD_HHMMSS_<command>.log`（`04_output_spec.md`「実行ログ（logs/）の標準仕様」、`08_user_acceptance_test.md`「実行ログと成功判定の考え方」参照）
-- **pytest/run_sample.shの検証結果を後から（別セッション・Codex等から）確認したい、同じ検証の再実行を避けたい** → `bash scripts/run_verification.sh`で`logs/evidence/<run_id>/`へ結果を保存する（`04_output_spec.md`「検証エビデンス」、`AGENTS.md`「テスト・検証の正式な実行方法」参照）
+- **pytest/run_sample.shの検証結果を後から（別セッション・Codex等から）確認したい、同じ検証の再実行を避けたい** → `bash scripts/run_verification.sh`で`logs/evidence/<run_id>/`へ結果を保存する。ただしCodexへの主な報告手段はこのエビデンスではなくClaude Codeの完了レポート（`CLAUDE_RULES.md`参照）であり、エビデンスは補助確認手段（`04_output_spec.md`「検証エビデンス」、`AGENTS.md`「このプロジェクトでのCodex確認入口」参照）
 - **教材の構成チェック・文章のブラッシュアップ案をChatGPT/Claude等にもらいたい** → `11_llm_handoff_workflow.md`（`llm-handoff`コマンド。LLM出力の自動取り込みは行わない）
 - **LLMの改善案をどう`editable/lesson_pages.json`に反映すればよいか迷う** → `12_llm_review_apply_workflow.md`（`edit-plan-template`コマンドで採用判断シートを作ってから手編集する）
 - **`llm-handoff`のLLM回答がOCR誤字の指摘ばかりになる** → `13_ocr_quality_check_workflow.md`（`ocr-check`コマンドでLLM投入前にOCR崩れ候補・修正候補を先に確認する）

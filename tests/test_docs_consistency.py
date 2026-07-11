@@ -189,13 +189,16 @@ def test_docs_do_not_claim_brushup_is_generated_at_output_root_by_build_all():
 
 
 def test_claude_rules_documents_common_design_rules():
-    """CLAUDE_RULES.mdにプロジェクト共通設計ルール（output構成/editable/source情報）が
-    明記されていることを確認する。"""
-    text = _read(REPO_ROOT / "CLAUDE_RULES.md")
-    assert "プロジェクト設計ルール" in text
-    assert "output/editable/lesson_pages.json" in text
-    assert "source_page_no" in text
-    assert "output/compat/" in text or "compat/" in text
+    """プロジェクト共通設計ルール（output構成/editable/source情報）が、開発ルールの3階層整理後は
+    PROJECT_RULES.md（プロジェクト固有ルールの正本）に明記されていることを確認する。
+    CLAUDE_RULES.mdは重複記載を避け、PROJECT_RULES.mdへのポインタを持つ。"""
+    project_rules_text = _read(REPO_ROOT / "PROJECT_RULES.md")
+    assert "output/editable/lesson_pages.json" in project_rules_text
+    assert "source_page_no" in project_rules_text
+    assert "output/compat/" in project_rules_text or "compat/" in project_rules_text
+
+    claude_rules_text = _read(REPO_ROOT / "CLAUDE_RULES.md")
+    assert "PROJECT_RULES.md" in claude_rules_text
 
 
 def test_docs_04_has_canonical_standard_output_structure_section():
@@ -400,9 +403,12 @@ def test_docs_08_explains_success_failure_judgment():
 
 
 def test_docs_document_log_masking_policy():
-    """logs/*.log の機密情報マスク仕様がCLAUDE_RULES.md/docs/04/08に明記されていることを確認する。"""
+    """logs/*.log の機密情報マスク仕様がdocs/04・docs/08に明記されていることを確認する。
+
+    開発ルールの3階層整理（PROJECT_RULES.md/CLAUDE_RULES.md/DEVELOPMENT_RULES.mdへの分離）に
+    伴い、CLAUDE_RULES.mdはこの仕様を重複記載せずPROJECT_RULES.md経由でdocs/04を参照する
+    （詳細はPROJECT_RULES.md「6. input・output・logs・生成物のGit管理方針」参照）。"""
     for path in (
-        REPO_ROOT / "CLAUDE_RULES.md",
         REPO_ROOT / "docs" / "04_output_spec.md",
         REPO_ROOT / "docs" / "08_user_acceptance_test.md",
     ):

@@ -234,20 +234,40 @@ def test_import_images_does_not_warn_when_ocr_succeeds_for_some_pages(tmp_path, 
 
 @pytest.mark.real_ocr
 def test_try_ocr_uses_resolved_tesseract_path_and_language(tmp_path, monkeypatch):
-    """_try_ocrが、環境診断で見つかったtesseractパスと言語をpytesseractに渡すことを確認する。"""
+    """_try_ocrが、環境診断で見つかったtesseractパスと言語をpytesseractに渡すことを確認する。
+
+    内部実装はsrc/ocr_engine.py（image_to_data・複数前処理・複数PSM）に委譲しているため、
+    フェイクのpytesseractモジュールもimage_to_data互換の形で応答を返す。
+    """
     import src.import_source as import_source_module
 
     captured = {}
 
+    class _Output:
+        DICT = "dict"
+
     class _FakePytesseractModule:
+        Output = _Output
+
         class pytesseract:
             tesseract_cmd = None
 
         @staticmethod
-        def image_to_string(image, lang=None):
+        def image_to_data(image, lang=None, config=None, output_type=None):
             captured["tesseract_cmd"] = _FakePytesseractModule.pytesseract.tesseract_cmd
             captured["lang"] = lang
-            return "OCR結果"
+            return {
+                "text": ["OCR結果"],
+                "conf": ["95"],
+                "left": [0],
+                "top": [0],
+                "width": [50],
+                "height": [20],
+                "block_num": [1],
+                "par_num": [1],
+                "line_num": [1],
+                "word_num": [1],
+            }
 
     ocr_status = {
         "tesseract_available": True,
@@ -263,7 +283,7 @@ def test_try_ocr_uses_resolved_tesseract_path_and_language(tmp_path, monkeypatch
 
     text = import_source_module._try_ocr(image_path, ocr_status)
 
-    assert text == "OCR結果"
+    assert "OCR結果" in text
     assert captured["tesseract_cmd"] == "/opt/homebrew/bin/tesseract"
     assert captured["lang"] == "jpn+eng"
 
@@ -274,3 +294,91 @@ def test_try_ocr_returns_empty_string_when_tesseract_unavailable(tmp_path):
 
     ocr_status = {"tesseract_available": False, "tesseract_path": None, "languages": []}
     assert import_source_module._try_ocr(tmp_path / "does_not_matter.png", ocr_status) == ""
+
+
+@pytest.mark.real_ocr
+def test_try_ocr_returns_empty_string_when_ocr_engine_raises(tmp_path, monkeypatch):
+    """ocr_engine.run_multi_ocr()が例外を送出しても、_try_ocr()は空文字を返す
+    （既存の「OCRが使えない環境でも取り込み自体は成立する」動作を維持する）。"""
+    import src.import_source as import_source_module
+
+    def _raise(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(import_source_module.ocr_engine, "run_multi_ocr", _raise)
+
+    ocr_status = {
+        "tesseract_available": True,
+        "tesseract_path": "/opt/homebrew/bin/tesseract",
+        "languages": ["eng", "jpn"],
+    }
+    image_path = tmp_path / "page_001.png"
+    _make_image(image_path)
+
+    assert import_source_module._try_ocr(image_path, ocr_status) == ""
+    assert import_source_module._last_ocr_diagnostics is None
+
+
+@pytest.mark.real_ocr
+def test_try_ocr_diagnostics_side_channel_reflects_engine_result(tmp_path, monkeypatch):
+    """_try_ocr()実行後、モジュールレベルの_last_ocr_diagnosticsから診断情報を取得できることを
+    確認する（_page_from_image()がOCR品質診断をログへ渡すための副チャンネル）。"""
+    import src.import_source as import_source_module
+    from src.ocr_engine import OcrDiagnostics, OcrResult
+
+    fake_result = OcrResult(
+        text="テスト本文",
+        diagnostics=OcrDiagnostics(preprocess="enhanced", psm=6, score=0.9, quality="ok"),
+    )
+    monkeypatch.setattr(
+        import_source_module.ocr_engine, "run_multi_ocr", lambda *a, **k: fake_result
+    )
+
+    ocr_status = {
+        "tesseract_available": True,
+        "tesseract_path": "/opt/homebrew/bin/tesseract",
+        "languages": ["eng", "jpn"],
+    }
+    image_path = tmp_path / "page_001.png"
+    _make_image(image_path)
+
+    text = import_source_module._try_ocr(image_path, ocr_status)
+
+    assert text == "テスト本文"
+    assert import_source_module._last_ocr_diagnostics is fake_result.diagnostics
+
+
+def test_page_from_image_collects_diagnostics_when_sink_provided(tmp_path, monkeypatch):
+    """diagnostics_sinkを渡すと、_try_ocr()実行後の診断情報がページ番号付きで記録される。
+    diagnostics_sinkの指定有無にかかわらず、常に_try_ocr()（唯一の呼び出し口）を経由するため、
+    tests/conftest.pyの既定モックはそのまま機能する。"""
+    import src.import_source as import_source_module
+    from src.ocr_engine import OcrDiagnostics
+
+    monkeypatch.setattr(
+        import_source_module, "_last_ocr_diagnostics", OcrDiagnostics(preprocess="original", psm=11, score=0.8)
+    )
+
+    image_path = tmp_path / "page_001.png"
+    _make_image(image_path)
+    ocr_status = {"tesseract_available": True, "tesseract_path": "/usr/bin/tesseract", "languages": ["jpn", "eng"]}
+
+    sink: list = []
+    import_source_module._page_from_image(1, image_path, tmp_path / "assets", ocr_status, diagnostics_sink=sink)
+
+    assert len(sink) == 1
+    assert sink[0]["page_no"] == 1
+    assert sink[0]["preprocess"] == "original"
+    assert sink[0]["psm"] == 11
+
+
+def test_page_from_image_without_sink_does_not_collect_diagnostics(tmp_path):
+    """diagnostics_sinkを渡さない場合（既定）は、従来どおり診断情報を収集しない。"""
+    import src.import_source as import_source_module
+
+    image_path = tmp_path / "page_001.png"
+    _make_image(image_path)
+    ocr_status = {"tesseract_available": True, "tesseract_path": "/usr/bin/tesseract", "languages": ["jpn", "eng"]}
+
+    page = import_source_module._page_from_image(1, image_path, tmp_path / "assets", ocr_status)
+    assert page["page_no"] == 1

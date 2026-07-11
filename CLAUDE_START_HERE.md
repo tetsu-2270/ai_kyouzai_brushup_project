@@ -6,7 +6,7 @@
 
 **実行確認について**: 通常のファイル編集・`pytest`実行・`run_sample.sh`実行・ドキュメント更新は、都度「実行してよいですか」と確認せず最後まで進めてください。認証・課金・外部反映などユーザー本人の操作が必要になる場合のみ事前に明示してください。詳細は`~/ai-development-rules/DEVELOPMENT_RULES.md`「2. 確認を減らす」を参照。
 
-**検証・テスト結果の報告について**: 実装完了後は、個別に`pytest`や`run_sample.sh`を実行して画面出力をそのまま報告するのではなく、正式な検証入口`bash scripts/run_verification.sh --purpose "<今回の目的>"`を実行し、結果は`logs/evidence/<run_id>/`へ保存してください。完了報告では長い実行ログを貼らず、エビデンス保存先（`logs/evidence/latest.json`が指す`run_id`）と総合結果だけを短く報告してください。詳細は`PROJECT_RULES.md`「9. このプロジェクトの正式な検証入口とエビデンス保存先」・[`docs/04_output_spec.md`](docs/04_output_spec.md)「検証エビデンス」参照。
+**検証・テスト結果の報告について**: 実装完了後は、個別に`pytest`や`run_sample.sh`を実行して画面出力をそのまま報告するのではなく、正式な検証入口`bash scripts/run_verification.sh --purpose "<今回の目的>"`を実行してください。結果は`logs/evidence/<run_id>/`へ保存されますが、**Codexへの主な報告手段はこのエビデンスではなく、`CLAUDE_RULES.md`のテンプレートに沿った自己完結した完了レポート**です（エビデンスは補助確認手段）。完了レポートには、検証の総合結果・エビデンス保存先（`logs/evidence/latest.json`が指す`run_id`）・実データ確認結果・実装前後比較・完了条件との対応・残課題を含め、長い実行ログはそのまま貼らないでください。詳細は`PROJECT_RULES.md`「9. このプロジェクトの正式な検証入口とエビデンス保存先」・`~/ai-development-rules/DEVELOPMENT_RULES.md`「6. Claude Code完了レポート（主確認手段）」参照。
 
 ## 最初にClaude Codeへ貼る指示
 

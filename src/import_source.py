@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from . import ocr_engine
 from .ocr_environment import (
     format_all_pages_empty_warning,
     format_precondition_warning,
@@ -26,26 +27,43 @@ def _natural_sort_key(name: str) -> list[Any]:
     return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", name)]
 
 
+# 直近の_try_ocr()呼び出しでのOCR品質診断（選択PSM・前処理・品質スコア・再試行有無等）を
+# 保持する副チャンネル。`_try_ocr()`のシグネチャ・呼び出し口を一切変更せずに診断情報を
+# 取り出せるようにするための仕組み（既存テストがtests/conftest.pyの共通fixtureで
+# `_try_ocr`をまるごとモック差し替えする前提を壊さないため）。モックされている場合、
+# 実際のOCRエンジンは呼ばれないため、この値は更新されない（＝診断情報は取得できない。
+# テスト環境では期待どおりの挙動）。CLIはシングルスレッド・逐次実行のため、モジュール
+# レベルの単純な変数で十分安全に扱える。
+_last_ocr_diagnostics: ocr_engine.OcrDiagnostics | None = None
+
+
 def _try_ocr(image_path: Path, ocr_status: dict[str, Any]) -> str:
     """画像からテキストを抽出する。pytesseractまたはtesseract本体が無い環境では空文字を返す。
 
-    OCR精度の向上は対象外。まずは画像を入力として扱えること・画像を落とさないことを優先し、
-    OCRが使えない環境でも取り込み自体は成立するようにする。
-    tesseractがPATHに無くても既知のインストール先（`ocr_status["tesseract_path"]`）で
+    内部では`src/ocr_engine.py`の複数前処理・複数PSM・品質スコアによる教材画像向けOCR改善
+    ロジックへ委譲する（詳細は`ocr_engine.run_multi_ocr()`参照）。この関数のシグネチャ・
+    「OCRが使えない環境でも取り込み自体は成立する」という既存の外部仕様（空文字を返す）は
+    維持する。tesseractがPATHに無くても既知のインストール先（`ocr_status["tesseract_path"]`）で
     見つかっていれば、そのパスを明示的に指定して実行を試みる。
+
+    処理した診断情報（選択したPSM・前処理・品質スコア・再試行有無等）は、呼び出し後に
+    モジュールレベルの`_last_ocr_diagnostics`から取り出せる（`_page_from_image()`参照）。
     """
+    global _last_ocr_diagnostics
+    _last_ocr_diagnostics = None
+
     if not ocr_status["tesseract_available"]:
         return ""
     try:
-        import pytesseract
-        from PIL import Image
+        import pytesseract  # noqa: F401  (存在確認のみ。実処理はocr_engine側で行う)
+        from PIL import Image  # noqa: F401
     except ImportError:
         return ""
-    pytesseract.pytesseract.tesseract_cmd = ocr_status["tesseract_path"]
     lang = resolve_ocr_lang(ocr_status["languages"])
     try:
-        with Image.open(image_path) as image:
-            return pytesseract.image_to_string(image, lang=lang)
+        result = ocr_engine.run_multi_ocr(image_path, ocr_status, lang, ocr_status["tesseract_path"])
+        _last_ocr_diagnostics = result.diagnostics
+        return result.text
     except Exception:
         return ""
 
@@ -71,8 +89,26 @@ def _copy_asset(src: Path, assets_dir: Path, dest_name: str) -> str:
     return f"assets/{dest_name}"
 
 
-def _page_from_image(index: int, image_path: Path, assets_dir: Path, ocr_status: dict[str, Any]) -> dict[str, Any]:
+def _page_from_image(
+    index: int,
+    image_path: Path,
+    assets_dir: Path,
+    ocr_status: dict[str, Any],
+    diagnostics_sink: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """`diagnostics_sink`を渡すと、OCR品質診断（選択PSM・前処理・品質スコア・再試行有無等）を
+    ページ番号付きでそのリストへ追記する（既定はNoneで従来どおり収集しない）。取り込み結果
+    （`imported_pages.json`のスキーマ）自体には影響しない、ログ用の副チャンネル。
+
+    OCRの実行自体は常に`_try_ocr()`（唯一の呼び出し口）を経由する。これにより、
+    `diagnostics_sink`の指定有無にかかわらず、テストでの`_try_ocr`モック差し替えが
+    そのまま機能する。
+    """
     ocr_text = _try_ocr(image_path, ocr_status)
+    if diagnostics_sink is not None and _last_ocr_diagnostics is not None:
+        diagnostics_sink.append(
+            {"page_no": index, "source_image": image_path.name, **vars(_last_ocr_diagnostics)}
+        )
     title, summary = _derive_title_and_summary(ocr_text, index, image_path.name)
     dest_name = f"page_{index:03d}{image_path.suffix.lower()}"
     source_image = _copy_asset(image_path, assets_dir, dest_name)
@@ -91,7 +127,11 @@ def _page_from_image(index: int, image_path: Path, assets_dir: Path, ocr_status:
 
 
 def import_images(
-    image_paths: list[Path], assets_dir: Path, project_title: str, quiet: bool = False
+    image_paths: list[Path],
+    assets_dir: Path,
+    project_title: str,
+    quiet: bool = False,
+    diagnostics_sink: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """画像ファイル群を、ファイル名順に1画像=1元ページとして取り込む。
 
@@ -104,6 +144,9 @@ def import_images(
     （`proofread`/`restructure`）経由で呼ばれる場合、同じ内容の警告を`build_all()`側で
     1つに集約して表示するため、ここでの重複表示を避ける（Phase 10.2追加修正）。
     単体の`import-source`コマンドからは`quiet`を指定せず、従来どおりここで警告を表示する。
+
+    `diagnostics_sink`を渡すと、`_page_from_image()`と同様にOCR品質診断をそのリストへ
+    追記する（既定はNoneで従来どおり収集しない。`imported_pages.json`のスキーマには影響しない）。
     """
     ocr_status = get_ocr_environment_status()
     if not ocr_status["ocr_ready"] and not quiet:
@@ -111,7 +154,7 @@ def import_images(
 
     sorted_paths = sorted(image_paths, key=lambda p: _natural_sort_key(p.name))
     pages = [
-        _page_from_image(index, path, assets_dir, ocr_status)
+        _page_from_image(index, path, assets_dir, ocr_status, diagnostics_sink=diagnostics_sink)
         for index, path in enumerate(sorted_paths, start=1)
     ]
 
@@ -207,7 +250,12 @@ def import_pptx(pptx_path: Path, assets_dir: Path) -> dict[str, Any]:
     return {"project_title": pptx_path.stem, "target_reader": "教材制作者", "pages": pages}
 
 
-def import_source(input_path: str | Path, assets_dir: str | Path, quiet: bool = False) -> dict[str, Any]:
+def import_source(
+    input_path: str | Path,
+    assets_dir: str | Path,
+    quiet: bool = False,
+    diagnostics_sink: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """元資料（画像ディレクトリ/画像ファイル/PDF/PPTX）を、pages形式JSON互換の辞書として取り込む。
 
     戻り値はexamples/sample_pages.jsonと同じpages形式であり、そのままlesson-pagesの
@@ -215,6 +263,9 @@ def import_source(input_path: str | Path, assets_dir: str | Path, quiet: bool = 
 
     `quiet=True`は画像取り込み時のOCR関連警告（`import_images()`参照）を抑制する。
     PDF/PPTXの取り込みはOCRを使わないため影響しない。
+
+    `diagnostics_sink`は画像取り込み時のみ意味を持つ（`import_images()`参照）。PDF/PPTXでは
+    無視される。
     """
     path = Path(input_path)
     assets_dir = Path(assets_dir)
@@ -227,11 +278,15 @@ def import_source(input_path: str | Path, assets_dir: str | Path, quiet: bool = 
             raise ValueError(
                 f"{path} 配下に画像ファイル（.png/.jpg/.jpeg/.webp）が見つかりません。"
             )
-        return import_images(image_paths, assets_dir, project_title=path.name, quiet=quiet)
+        return import_images(
+            image_paths, assets_dir, project_title=path.name, quiet=quiet, diagnostics_sink=diagnostics_sink
+        )
 
     suffix = path.suffix.lower()
     if suffix in _IMAGE_EXTENSIONS:
-        return import_images([path], assets_dir, project_title=path.stem, quiet=quiet)
+        return import_images(
+            [path], assets_dir, project_title=path.stem, quiet=quiet, diagnostics_sink=diagnostics_sink
+        )
     if suffix == ".pdf":
         return import_pdf(path, assets_dir)
     if suffix == ".pptx":
