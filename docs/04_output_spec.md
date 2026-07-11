@@ -282,8 +282,48 @@ output/ocr_comparison/
   summary.json          # 全体サマリー（機械可読。needs_reviewページ一覧・比較指標等）
   summary.md            # 全体サマリー（人間可読）
   pages/page_NNN.json   # ページごとの両エンジン結果・比較指標・不一致理由
-  review.html           # 元画像・両エンジン結果・不一致理由を1ページずつ並べた自己完結型HTML
+  review.html           # 元画像・両エンジン結果（文字単位の差分ハイライト付き）・不一致理由を
+                        # 1ページずつ並べた自己完結型HTML
+  CLAUDE_OCR_REVIEW.md  # (Apple Vision利用可能時のみ) Claude Code向けの自己完結した画像照合
+                        # レビュー指示書（Phase 10.10。詳細は後述）
+  claude_review/
+    README.md            # claude_review/の説明（build-allが生成）
+    pages/page_NNN.json  # ページ別の画像照合結果（指示書を実行したClaude Codeが作成。
+                          # build-all実行時点では生成されない）
+    progress.json         # 進捗（同上）
+    candidates.json       # 全ページの集約結果（同上）
+    review_summary.md     # 人間確認用サマリー（同上）
 ```
+
+`review.html`は各ページを「元画像 / Tesseract / Apple Vision」の3列（狭い画面では縦並び）で構成し、Tesseract/Apple Visionの全文は`difflib.SequenceMatcher`による文字単位の差分ハイライト（置換・削除・追加を左右で色分け・下線スタイルで区別）付きで表示する（Phase 10.8。詳細は`docs/13_ocr_quality_check_workflow.md`「17.7 差分ハイライト」参照）。この差分ハイライトは表示専用であり、`needs_review`判定・比較指標・`summary.json`/ページ別JSONの形式には一切影響しない。
+
+Tesseract/Apple Visionの表示欄（読み取り専用）とは別に、編集可能な「確定テキスト」欄を各ページに持つ（Phase 10.9）。確定欄にコピー・手修正した内容、または「Tesseractを採用」／「Apple Visionを採用」の指定は、ブラウザの`localStorage`へ自動保存され、「レビュー結果をJSONで書き出す」ボタンで以下の形式のJSONをダウンロードできる。
+
+```json
+{
+  "schema_version": 1,
+  "generated_at": "ISO 8601",
+  "source": "ocr_comparison_review",
+  "pages": [
+    {
+      "page_no": 1,
+      "adopted_source": "edited",
+      "adopted_text": "確定した本文",
+      "final_text": "確定欄の本文",
+      "tesseract_selected": false,
+      "apple_vision_selected": false,
+      "requires_source_review": false,
+      "review_completed": true,
+      "error": null,
+      "warning": null
+    }
+  ]
+}
+```
+
+採用優先順位（確定テキスト＞採用チェック＞未確認）・保存キーの一意性・安全性の詳細は[`docs/13_ocr_quality_check_workflow.md`](13_ocr_quality_check_workflow.md)「17.8 確定テキスト編集・採用判定・JSON書き出し」を参照。**このJSON書き出しは`output/editable/lesson_pages.json`・`summary.json`・ページ別JSON・Tesseract/Apple Vision結果のいずれも自動変更しない**（正式データへの反映は別タスク）。
+
+Apple Visionが利用できた場合、`CLAUDE_OCR_REVIEW.md`（Claude Code向けの自己完結した画像照合レビュー指示書）と`claude_review/README.md`も自動生成される（Phase 10.10）。この指示書を読んだ別セッションのClaude Codeが、元画像を正本としてTesseract/Apple Vision結果を照合し、`claude_review/pages/page_NNN.json`（ページ別候補）・`progress.json`（進捗）・`candidates.json`（全体集約）・`review_summary.md`（人間確認用サマリー）を作成できる。**プログラムからのClaude API呼び出し・自動起動は行わない**（`build-all`実行時点では指示書とREADMEのみを生成し、それ以外は指示書を読んだClaude Codeが作成する）。**このレビュー結果も`output/editable/lesson_pages.json`へ自動反映されない。** 仕様の詳細は[`docs/13_ocr_quality_check_workflow.md`](13_ocr_quality_check_workflow.md)「17.9 Claude Codeレビュー指示書」を参照。
 
 詳細な比較指標・`needs_review`判定基準・設計思想は[`docs/13_ocr_quality_check_workflow.md`](13_ocr_quality_check_workflow.md)「17. Apple Vision OCRとの比較」を参照。**`output/editable/lesson_pages.json`は変更されない**（Apple Vision結果の自動反映は行わない）。`output/ocr_comparison/`は`output/`配下のためGit管理対象外（「input・output・logs・生成物のGit管理方針」参照）。
 

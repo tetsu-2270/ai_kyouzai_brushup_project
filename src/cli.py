@@ -38,6 +38,7 @@ from .ocr_check import (
     render_ocr_check_report_markdown,
     write_correction_candidates_json,
 )
+from . import ocr_claude_review
 from .ocr_comparison import run_ocr_comparison_for_pages, write_comparison_outputs
 from .ocr_patterns import load_ocr_patterns
 from .output_clean import clean_known_outputs
@@ -517,6 +518,7 @@ def _run_ocr_engine_comparison(
     """
     summary = run_ocr_comparison_for_pages(pages, assets_dir, tesseract_diagnostics=tesseract_diagnostics)
     paths = write_comparison_outputs(output_dir, summary)
+    claude_review_available = "claude_ocr_review_md" in paths
     if logger:
         logger.add_section("OCR_COMPARISON", {
             "vision_helper_available": summary.vision_helper_available,
@@ -527,10 +529,51 @@ def _run_ocr_engine_comparison(
             "tesseract_only_review_pages": summary.tesseract_only_review_pages,
             "vision_only_review_pages": summary.vision_only_review_pages,
             "both_engines_review_pages": summary.both_engines_review_pages,
+            "claude_ocr_review_available": claude_review_available,
         })
         logger.record_generated_file(paths["summary_json"])
         logger.record_generated_file(paths["summary_md"])
         logger.record_generated_file(paths["review_html"])
+        if claude_review_available:
+            logger.record_generated_file(paths["claude_ocr_review_md"])
+            logger.record_generated_file(paths["claude_review_readme"])
+
+    _print_claude_ocr_review_notice(summary, output_dir, claude_review_available, logger=logger)
+
+
+def _print_claude_ocr_review_notice(
+    summary,
+    output_dir: Path,
+    claude_review_available: bool,
+    logger: ExecutionLogger | None = None,
+) -> None:
+    """`--ocr-engine tesseract+vision`実行後、標準出力へClaude Codeレビュー指示書の案内
+    （またはApple Vision利用不可時の理由・再実行方法）を表示する。
+    """
+    rel_output_dir = ocr_claude_review._relative_output_dir(output_dir)
+    instructions_rel = f"{rel_output_dir}/ocr_comparison/{ocr_claude_review.CLAUDE_OCR_REVIEW_FILENAME}"
+
+    if claude_review_available:
+        message = (
+            "\nCLAUDE_OCR_REVIEW\n"
+            f"指示書: {instructions_rel}\n"
+            "\n"
+            "Claude Codeへ次の1文を渡してください:\n"
+            f"{instructions_rel} を読み、記載された手順を最後まで実行してください。\n"
+        )
+    else:
+        message = (
+            "\nCLAUDE_OCR_REVIEW: 生成されませんでした\n"
+            f"理由: Apple Vision OCRが利用できませんでした（{summary.vision_unavailable_reason}）\n"
+            "再実行方法: bash scripts/build_apple_vision_ocr.sh でヘルパーをビルドしてから、\n"
+            "  --ocr-engine tesseract+vision を指定して build-all を再実行してください。\n"
+        )
+    print(message)
+    if logger:
+        logger.add_section("CLAUDE_OCR_REVIEW", {
+            "available": claude_review_available,
+            "instructions_path": instructions_rel if claude_review_available else None,
+        })
 
 
 def regenerate(

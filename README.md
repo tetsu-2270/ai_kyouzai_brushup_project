@@ -314,9 +314,24 @@ python3 -m src.cli build-all \
 ```
 
 - 事前に`bash scripts/build_apple_vision_ocr.sh`でヘルパー（`tools/apple_vision_ocr/`）をビルドしておく必要があります（macOS + Xcode Command Line Toolsが必要。未ビルド・macOS以外では自動的にTesseractのみへフォールバックし、`build-all`自体は失敗しません）。
-- 比較結果は`output/ocr_comparison/`（`summary.json`/`summary.md`/`pages/page_NNN.json`/`review.html`）へ保存されます。`review.html`は元画像・Tesseract結果・Apple Vision結果・不一致理由を1ページずつ並べた自己完結型HTMLで、ブラウザでそのまま開けます。
+- 比較結果は`output/ocr_comparison/`（`summary.json`/`summary.md`/`pages/page_NNN.json`/`review.html`）へ保存されます。`review.html`は元画像・Tesseract結果・Apple Vision結果・不一致理由を1ページずつ「元画像/Tesseract/Apple Vision」の3列で並べた自己完結型HTMLで、ブラウザでそのまま開けます。TesseractとApple Visionの全文は文字単位で差分ハイライト（置換・削除・追加を色分け・下線スタイルで区別）されるため、どこが違うのか一目で分かります。
 - **Apple Visionの結果は`output/editable/lesson_pages.json`へ自動反映されません。** 正式な編集対象は引き続き`output/editable/lesson_pages.json`（Tesseract結果ベース）です。両エンジンの不一致が大きいページは`needs_review`として記録され、人間が`review.html`で確認します。
+- 各ページには編集可能な「確定テキスト」欄があり、Tesseract/Apple Visionいずれかをコピーして手修正するか、どちらかの採用を選べます（確定欄に内容があれば常に優先採用）。編集内容はブラウザに自動保存され、「レビュー結果をJSONで書き出す」でダウンロードできます（このJSONも`editable/lesson_pages.json`等の既存データを自動更新しません）。
 - Apple Visionが使えない場合（macOS以外・ヘルパー未ビルド等）でも、エンジン不一致を理由に全ページを`needs_review`にはしません（既存のTesseract自身の品質判定のみを使います）。
+
+#### Claude Codeへ丸ごと画像照合を依頼する（`CLAUDE_OCR_REVIEW.md`）
+
+Apple Visionが利用できた場合、上記コマンドの実行後に次のような案内が表示されます。
+
+```text
+CLAUDE_OCR_REVIEW
+指示書: output/ocr_comparison/CLAUDE_OCR_REVIEW.md
+
+Claude Codeへ次の1文を渡してください:
+output/ocr_comparison/CLAUDE_OCR_REVIEW.md を読み、記載された手順を最後まで実行してください。
+```
+
+**利用者は、この最後の1文をそのままコピーして別のClaude Codeセッションへ渡すだけで構いません。** ページ数（数ページ〜100ページ以上）に応じた指示文を毎回自分で考える必要はありません。指示書を読んだClaude Codeは、元画像を正本としてTesseract/Apple Vision結果を1ページずつ照合し、`output/ocr_comparison/claude_review/`配下へページ別候補（`pages/page_NNN.json`）・進捗（`progress.json`）・全体集約（`candidates.json`）・人間確認用サマリー（`review_summary.md`）を作成します。ページ単位で保存されるため中断・再開でき、Claude API等の外部呼び出しは一切行いません。**この結果も`output/editable/lesson_pages.json`へ自動反映されません**（反映するかどうかは人間が`review_summary.md`を見て判断します）。詳細は[`docs/13_ocr_quality_check_workflow.md`](docs/13_ocr_quality_check_workflow.md)「17.9 Claude Codeレビュー指示書」を参照してください。
 
 詳細は[`docs/13_ocr_quality_check_workflow.md`](docs/13_ocr_quality_check_workflow.md)「Apple Vision OCRとの比較」を参照してください。
 

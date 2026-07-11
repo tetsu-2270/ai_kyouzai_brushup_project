@@ -145,3 +145,151 @@ def test_build_all_ocr_engine_tesseract_vision_falls_back_when_vision_unavailabl
     assert summary_data["vision_helper_available"] is False
     assert summary_data["needs_review_pages"] == []
     assert (output_dir / "editable" / "lesson_pages.json").exists()
+
+
+# --- Phase 10.10: Claude Codeレビュー指示書の自動生成 --------------------------------------------
+
+
+def test_build_all_ocr_engine_tesseract_vision_generates_claude_review_instructions(tmp_path, monkeypatch):
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir)
+    output_dir = tmp_path / "output"
+
+    monkeypatch.setattr(ocr_comparison.apple_vision_ocr, "check_apple_vision_availability", _availability_available)
+    monkeypatch.setattr(ocr_comparison.apple_vision_ocr, "run_apple_vision_ocr", _fake_vision_matching_tesseract)
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "build-all", "--input", str(source_dir), "--mode", "proofread",
+            "--output-dir", str(output_dir), "--ocr-engine", "tesseract+vision",
+        ],
+    )
+    main()
+
+    comparison_dir = output_dir / "ocr_comparison"
+    assert (comparison_dir / "CLAUDE_OCR_REVIEW.md").exists()
+    assert (comparison_dir / "claude_review" / "README.md").exists()
+    # build-all時点ではREADME以外(pages/・progress.json・candidates.json等)は生成されない。
+    claude_review_entries = {p.name for p in (comparison_dir / "claude_review").iterdir()}
+    assert claude_review_entries == {"README.md"}
+    # 既存の比較出力一覧(summary.json/summary.md/review.html)は引き続き生成される。
+    assert (comparison_dir / "summary.json").exists()
+    assert (comparison_dir / "summary.md").exists()
+    assert (comparison_dir / "review.html").exists()
+
+
+def test_build_all_default_ocr_engine_does_not_generate_claude_review_instructions(tmp_path, monkeypatch):
+    """--ocr-engineを指定しない（既定tesseract）場合、Claude Codeレビュー指示書は生成されない。"""
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir)
+    output_dir = tmp_path / "output"
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "build-all", "--input", str(source_dir), "--mode", "proofread", "--output-dir", str(output_dir)],
+    )
+    main()
+
+    assert not (output_dir / "ocr_comparison").exists()
+
+
+def test_build_all_ocr_engine_tesseract_vision_prints_fixed_copyable_instruction(tmp_path, monkeypatch, capsys):
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir)
+    output_dir = tmp_path / "output"
+
+    monkeypatch.setattr(ocr_comparison.apple_vision_ocr, "check_apple_vision_availability", _availability_available)
+    monkeypatch.setattr(ocr_comparison.apple_vision_ocr, "run_apple_vision_ocr", _fake_vision_matching_tesseract)
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "build-all", "--input", str(source_dir), "--mode", "proofread",
+            "--output-dir", str(output_dir), "--ocr-engine", "tesseract+vision",
+        ],
+    )
+    main()
+
+    captured = capsys.readouterr()
+    assert "CLAUDE_OCR_REVIEW" in captured.out
+    # --output-dirへ絶対パス(tmp_path配下)を渡した場合でも、標準出力へ絶対パスは表示されない
+    # （安全側のフォールバックでディレクトリ名のみを使う）。
+    assert str(tmp_path) not in captured.out
+    assert "ocr_comparison/CLAUDE_OCR_REVIEW.md" in captured.out
+    assert "を読み、記載された手順を最後まで実行してください。" in captured.out
+
+
+def test_build_all_ocr_engine_tesseract_vision_does_not_claim_review_when_vision_unavailable(
+    tmp_path, monkeypatch, capsys
+):
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir)
+    output_dir = tmp_path / "output"
+
+    monkeypatch.setattr(ocr_comparison.apple_vision_ocr, "check_apple_vision_availability", _availability_unavailable)
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "build-all", "--input", str(source_dir), "--mode", "proofread",
+            "--output-dir", str(output_dir), "--ocr-engine", "tesseract+vision",
+        ],
+    )
+    main()
+
+    captured = capsys.readouterr()
+    assert "生成されませんでした" in captured.out
+    assert "理由" in captured.out
+    assert "再実行方法" in captured.out
+    # 「Claude Codeへ次の1文を渡してください」という誤った次ステップ案内を表示しない。
+    assert "次の1文を渡してください" not in captured.out
+    assert not (output_dir / "ocr_comparison" / "CLAUDE_OCR_REVIEW.md").exists()
+
+
+def test_build_all_ocr_engine_tesseract_vision_keeps_phase10_9_review_ui_intact(tmp_path, monkeypatch):
+    """Phase 10.9で追加した確定テキスト編集UI（review.html）が、Phase 10.10の追加によって
+    壊れていないことを確認する。"""
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir)
+    output_dir = tmp_path / "output"
+
+    monkeypatch.setattr(ocr_comparison.apple_vision_ocr, "check_apple_vision_availability", _availability_available)
+    monkeypatch.setattr(ocr_comparison.apple_vision_ocr, "run_apple_vision_ocr", _fake_vision_matching_tesseract)
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "build-all", "--input", str(source_dir), "--mode", "proofread",
+            "--output-dir", str(output_dir), "--ocr-engine", "tesseract+vision",
+        ],
+    )
+    main()
+
+    review_html = (output_dir / "ocr_comparison" / "review.html").read_text(encoding="utf-8")
+    assert "diff-legend" in review_html
+    assert "compare-grid" in review_html
+    assert 'id="ocr-review-export-btn"' in review_html
+    assert 'id="ocr-review-reset-btn"' in review_html
+    assert "<textarea" in review_html
+
+
+def test_build_all_ocr_engine_tesseract_vision_claude_review_files_do_not_affect_editable(tmp_path, monkeypatch):
+    source_dir = tmp_path / "source"
+    _make_source_images(source_dir)
+    output_dir = tmp_path / "output"
+
+    monkeypatch.setattr(ocr_comparison.apple_vision_ocr, "check_apple_vision_availability", _availability_available)
+    monkeypatch.setattr(ocr_comparison.apple_vision_ocr, "run_apple_vision_ocr", _fake_vision_matching_tesseract)
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli", "build-all", "--input", str(source_dir), "--mode", "proofread",
+            "--output-dir", str(output_dir), "--ocr-engine", "tesseract+vision",
+        ],
+    )
+    main()
+
+    lesson = json.loads((output_dir / "editable" / "lesson_pages.json").read_text(encoding="utf-8"))
+    assert "CLAUDE_OCR_REVIEW" not in json.dumps(lesson, ensure_ascii=False)

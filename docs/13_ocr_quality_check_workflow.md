@@ -418,12 +418,211 @@ output/ocr_comparison/
 
 `review.html`は外部CDN・外部JS・外部CSSを使用せず、既存の`output/assets/`の画像を相対パスで参照する（画像を重複コピーしない）。ブラウザ上でのJSON編集・保存機能は無く、目視確認専用。
 
+各ページは「元画像 / Tesseract / Apple Vision」の3列（狭い画面では縦並び）で構成し、Tesseract全文とApple Vision全文は`difflib.SequenceMatcher`による**文字単位の差分ハイライト**付きで並べて表示する（Phase 10.8）。詳細は17.7節を参照。
+
 ### 17.6 実行ログへの記録
 
 `--ocr-engine tesseract+vision`時、`build-all`の実行ログに`OCR_COMPARISON`セクションが追加され、Apple Vision利用可否・比較対象ページ数・`needs_review`ページ一覧（Tesseractのみ要確認／Apple Vision不一致のみ要確認／両方の理由で要確認、を区別）が記録される。
 
-### 17.7 今回対象外にしたこと
+### 17.7 差分ハイライト（Phase 10.8・review.html表示専用）
+
+Tesseract全文とApple Vision全文をそのまま並べるだけでは、どの文字が違うのか目視で探す必要があり確認しづらかったため、`review.html`のTesseract/Apple Vision列に、`difflib.SequenceMatcher`による文字単位の差分ハイライトを追加した。**判定ロジック（`src/ocr_compare.py`の正規化・閾値・`needs_review`判定）やJSON形式（`summary.json`/ページ別JSON）は一切変更していない**。あくまで`review.html`の表示だけを改善するもの。
+
+- `src/ocr_comparison.py`の`_render_text_diff(left, right)`が、`SequenceMatcher.get_opcodes()`の`equal`/`replace`/`delete`/`insert`を、`<mark>`要素の異なるCSSクラスへ変換する。
+  - `delete`（Tesseractのみに存在）: 左側だけに`diff-tess-del`
+  - `insert`（Apple Visionのみに存在）: 右側だけに`diff-vision-ins`
+  - `replace`: 左側に`diff-tess-rep`、右側に`diff-vision-rep`（`delete`/`insert`とは下線スタイル（実線/破線）で区別し、色だけに依存しない）
+- 色の意味は「どちらの側にだけ存在するか／置換されたか」であり、**Apple Visionを正解として自動判定する意味付けはしていない**（人間が元画像を見て判断する設計を維持）。
+- HTML安全性: 元の文字列を先に`SequenceMatcher`で分割してから、分割済みの断片だけを個別に`html.escape()`する（エスケープ後の全文に対して文字位置を適用するとインデックスがずれるため）。`<script>`・`</span>`・`&`・引用符等を含むOCR文字列でもHTML構造を壊さない。
+- 各ページ冒頭に凡例（`diff-legend`）を表示し、色以外に`title`属性・下線スタイルでも意味を判別できるようにしている。
+- 比較不能時（Apple Vision利用不可・片側または両側が空・非常に長い文字列・絵文字等）でもHTML生成が失敗しないようにしている。片側が空の場合はもう一方の全文がその側だけの差分として強調され、両方空の場合は「(OCRテキストなし)」と表示する。
+
+### 17.8 確定テキスト編集・採用判定・JSON書き出し（Phase 10.9・review.html内で完結）
+
+Tesseract/Apple Visionの表示欄（読み取り専用）に加え、`review.html`に編集可能な「確定テキスト」欄を追加し、レビュー結果をブラウザ内で完結させたJSONとして書き出せるようにした。**この操作はすべて`review.html`内のブラウザローカルの状態であり、`output/editable/lesson_pages.json`・`summary.json`・ページ別JSON・Tesseract/Apple Vision結果本体のいずれも自動変更しない**（正式データへの反映は別タスク）。
+
+#### 操作の流れ
+
+1. 各ページのTesseract/Apple Visionパネル上部にある「確定欄へコピー」ボタンで、そのページの全文（プレーンテキスト、差分ハイライトの`<mark>`タグは含まない）を「確定テキスト」欄へコピーする。確定欄に既に内容がある場合は上書き確認ダイアログが出る。
+2. コピー後、確定欄を自由に手修正できる（Tesseract/Apple Visionの表示自体は変更されない）。
+3. 確定欄に何も入力しない場合は、「採用判定」の「Tesseractを採用」／「Apple Visionを採用」のいずれかを選ぶ（同時選択は不可。「選択を解除」で未選択に戻せる）。
+4. 「元画像を要再確認」／「確認完了」は採用元とは独立したチェック項目。
+5. 編集内容・採用指定・チェック状態は、入力するたびにブラウザの`localStorage`へ自動保存される（保存状態はページごとに「保存済み HH:MM:SS」と表示）。ページを再読み込みしても保持される。
+6. ページ上部の「レビュー結果をJSONで書き出す」でJSONファイルをダウンロードする。「全レビュー状態をリセット」で保存済みの状態をすべて削除できる（実行前に確認ダイアログが出る）。
+
+#### 採用優先順位（`resolvePageAdoption()`。固定ロジック）
+
+1. 確定テキスト欄に空白以外の内容がある → その内容を採用（`adopted_source: "edited"`）。Tesseract/Apple Visionの採用指定より常に優先
+2. 確定欄が空、Tesseract採用が選択されている → Tesseract全文を採用（`"tesseract"`）
+3. 確定欄が空、Apple Vision採用が選択されている → Apple Vision全文を採用（`"apple_vision"`）
+4. 確定欄が空、どちらも未選択 → 未確定（`"unresolved"`）
+
+Tesseract/Apple Visionの採用ラジオはページごとに同じ`name`属性を持つため、通常のブラウザ操作では同時選択できない。読み込んだ状態データ等により同時選択状態が発生した場合、確定欄が空なら書き出し時にエラー（`adopted_source: "error"`）として明示し、確定欄に内容があれば`edited`を優先しつつ警告を添える。「確認完了」が選択されているのに採用結果が`unresolved`の場合も警告する。
+
+#### 保存キーの一意性（`localStorage`）
+
+保存キーは`ocr_review_state:<materialId>:page-<ページ番号>`の形式。`materialId`は、そのページ一式の`source_image`一覧から算出した簡易ハッシュ（`simpleHash()`/`buildMaterialId()`）で、対象教材ごとに異なる値になる。別の教材・別の`output`で生成した`review.html`を同じブラウザで開いても、保存状態が混ざらない。
+
+#### 書き出しJSONの形式
+
+```json
+{
+  "schema_version": 1,
+  "generated_at": "ISO 8601",
+  "source": "ocr_comparison_review",
+  "pages": [
+    {
+      "page_no": 1,
+      "adopted_source": "edited",
+      "adopted_text": "確定した本文",
+      "final_text": "確定欄の本文",
+      "tesseract_selected": false,
+      "apple_vision_selected": false,
+      "requires_source_review": false,
+      "review_completed": true,
+      "error": null,
+      "warning": null
+    }
+  ]
+}
+```
+
+絶対パス・秘密情報は含めない。`error`が1件でもある場合、書き出しは中断され、該当ページを示すアラートが表示される。
+
+#### HTML・JavaScript安全性
+
+- 外部CDN・外部JavaScript・外部CSSは使用しない
+- OCR文字列・編集文字列をHTMLとして挿入しない（`textContent`/`.value`のみを使用）。差分ハイライトの`<mark>`タグ（`_render_text_diff`）とは別に、コピー元の全文はプレーンテキストとして`<script type="application/json">`ブロックへ安全に埋め込む（`</script`断片は無害化。`src/completion_report.py`と同じ考え方）
+- `eval`・`new Function`は使用しない
+- 採用判定ロジック（`resolvePageAdoption`）・保存キー生成（`simpleHash`/`buildMaterialId`/`buildStorageKey`）は、DOM・`localStorage`に依存しない純粋関数として分離している（`src/ocr_comparison.py`の`_REVIEW_JS_PURE`）
+
+### 17.9 Claude Codeレビュー指示書（`CLAUDE_OCR_REVIEW.md`。Phase 10.10）
+
+比較結果を人間が1ページずつ目視確認する（17.5節）だけでなく、Claude Code（本ツールとは別セッション）に元画像とTesseract/Apple Vision結果を照合させ、ページごとの候補を作らせるための自己完結した作業指示書を自動生成できる。**このPhaseではClaude API等の外部API呼び出し・自動起動は行わない。** 指示書を読んだ人間が、別途Claude Codeセッションでその指示書を実行する運用を想定している。
+
+#### 使い方
+
+```bash
+python3 -m src.cli build-all \
+  --input input/source --mode proofread --output-dir output \
+  --output-format image --ocr-engine tesseract+vision
+```
+
+Apple Visionが利用できた場合、実行後に次が標準出力へ表示される。
+
+```text
+CLAUDE_OCR_REVIEW
+指示書: output/ocr_comparison/CLAUDE_OCR_REVIEW.md
+
+Claude Codeへ次の1文を渡してください:
+output/ocr_comparison/CLAUDE_OCR_REVIEW.md を読み、記載された手順を最後まで実行してください。
+```
+
+利用者は、上記の最後の1文をそのままコピーして別のClaude Codeセッションへ渡すだけでよい。ページ数（数ページ〜100ページ以上）を意識した固定文言を毎回考える必要はない。
+
+Apple Visionが利用できなかった場合（未ビルド・macOS以外等）は、指示書自体を生成せず、理由と再実行方法（`bash scripts/build_apple_vision_ocr.sh`でのビルド）を表示する（中身の伴わない指示書を「照合できる」ように見せかけない）。
+
+#### 生成されるファイル
+
+```text
+output/ocr_comparison/
+  CLAUDE_OCR_REVIEW.md          # Claude Code向けの自己完結した作業指示書（build-allが生成）
+  claude_review/
+    README.md                    # このディレクトリの説明（build-allが生成）
+    pages/page_NNN.json          # ページ別の照合結果（指示書を実行したClaude Codeが作成）
+    progress.json                # 進捗（同上）
+    candidates.json              # 全ページの集約結果（同上）
+    review_summary.md            # 人間確認用サマリー（同上）
+```
+
+`build-all`実行時点では`CLAUDE_OCR_REVIEW.md`と`claude_review/README.md`だけが生成され、`pages/`以下・`progress.json`・`candidates.json`・`review_summary.md`は生成されない（指示書を読んだClaude Codeが作業を進めながら作成する）。
+
+#### 指示書の内容
+
+`CLAUDE_OCR_REVIEW.md`は、その回の実データ（`ComparisonSummary`）から対象ページ総数・ページ番号一覧・各種相対パス・Apple Vision利用可否・`needs_review`ページ・生成日時を埋め込むが、**OCR全文・画像バイナリは埋め込まない**（Claude Codeが既存のページ別比較JSON・元画像を直接読む設計）。絶対パスも埋め込まない。
+
+指示書には以下を明記する。
+
+- 元画像を唯一の正本として扱う採用判断基準（多数決で決めない、片方が正しければ採用、部分ごとの統合、両方誤りなら画像に基づいて修正、画像に無い文字を推測しない）
+- 判断区分`decision`（`tesseract`/`apple_vision`/`merged`/`corrected`/`unresolved`の5種類に限定）
+- ページ別候補JSON・進捗JSON・全体集約JSON・人間確認用サマリーの仕様（下記）
+- ページ単位で保存しながら進める中断・再開の手順（100ページ以上でも1回のコンテキストへ全画像を読み込もうとしない）
+- Claude Codeが「作業完了」と報告してよい条件（10節参照）
+
+#### ページ別候補JSON（`claude_review/pages/page_NNN.json`）
+
+```json
+{
+  "schema_version": 1,
+  "page_no": 7,
+  "source_image": "assets/page_007.jpeg",
+  "decision": "merged",
+  "proposed_text": "元画像と照合して統合したページ全文",
+  "corrections": [
+    {"location": "本文1行目", "tesseract": "店労したこと", "apple_vision": "苦労したこと",
+     "adopted": "苦労したこと", "reason": "元画像では「苦労」と読める"}
+  ],
+  "unresolved_spans": [],
+  "requires_human_review": false,
+  "review_notes": "",
+  "reviewed_by": "claude_code",
+  "reviewed_at": "ISO 8601"
+}
+```
+
+`unresolved_spans`が1件でもあるページは、必ず`requires_human_review: true`にする。
+
+#### 進捗JSON（`claude_review/progress.json`）
+
+```json
+{
+  "schema_version": 1,
+  "total_pages": 100,
+  "completed_pages": [1, 2, 3],
+  "unresolved_pages": [3],
+  "failed_pages": [],
+  "remaining_pages": [4, 5, 6],
+  "updated_at": "ISO 8601"
+}
+```
+
+既に正常な候補JSON（スキーマが正しく、対象の比較JSONより新しい）が存在するページは処理済みとして扱い、未処理のページから再開できる。
+
+#### 全体集約JSON（`claude_review/candidates.json`）
+
+```json
+{
+  "schema_version": 1,
+  "generated_at": "ISO 8601",
+  "source": "claude_code_image_review",
+  "total_pages": 100,
+  "completed_pages": 100,
+  "requires_human_review_pages": [3, 18],
+  "decision_counts": {"tesseract": 10, "apple_vision": 60, "merged": 20, "corrected": 8, "unresolved": 2},
+  "pages": []
+}
+```
+
+集約時に、ページ欠落・重複・順序・必須フィールド・`decision`の許可値・`unresolved_spans`と`requires_human_review`の整合・件数集計の一致を検証する。
+
+#### 人間確認用サマリー（`claude_review/review_summary.md`）
+
+対象ページ数・完了ページ数・判断区分ごとの件数・人間確認が必要なページ一覧・ページごとの判断概要・主な修正例・未解決箇所・`editable/lesson_pages.json`へ未反映である注意書き・次に人間が行う操作を含む。人間はまずこのファイルを読み、`requires_human_review_pages`のページだけを重点確認すればよい。
+
+#### 安全性・既存仕様との関係
+
+- Claude API・外部APIの呼び出し、画像・テキストの外部送信、Claude Codeプロセスの自動起動はいずれも行わない
+- 候補の`editable/lesson_pages.json`への自動反映は行わない（将来の別タスク）
+- 比較元JSON（`summary.json`・`pages/page_NNN.json`）・元画像は変更しない
+- Phase 10.8の差分ハイライト・Phase 10.9の確定テキスト編集機能はそのまま維持される（`review.html`は変更されない）
+- `claude_review/`は`output/`配下のためGit管理対象外
+
+### 17.10 今回対象外にしたこと
 
 - Apple Vision結果の`editable/lesson_pages.json`への自動採用（将来のバージョンで別タスクとして検討）
 - Apple Vision単体での取り込み（Tesseractの置き換え）
 - 外部API・有料サービスとしてのOCR（Apple Visionはローカル処理のみで、画像・OCR結果を外部へ送信しない）
+- 差分ハイライト（17.7節）は表示専用であり、`needs_review`判定・比較指標の計算方法・閾値には一切影響しない
+- Claude Codeレビュー指示書（17.9節）が生成する候補JSONの`editable/lesson_pages.json`への自動反映（将来の別タスク）
+- プログラムからのClaude API呼び出し・Claude Codeプロセスの自動起動（17.9節の指示書はあくまで人間が別セッションへ手動で渡すことを前提にしている）
+- 確定テキスト編集・書き出しJSON（17.8節）は`review.html`内で完結し、正式データ（`editable/lesson_pages.json`）への反映は行わない（将来の別タスク）

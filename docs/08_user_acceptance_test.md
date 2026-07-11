@@ -209,7 +209,32 @@ bash scripts/check_ocr_env.sh
 
 大見出し・本文・グラフ・注記が混在する教材画像でも、`src/ocr_engine.py`が複数の前処理・複数PSM・品質スコアによる最良候補選択と、低品質時のみの再試行を行い、単純な`pytesseract.image_to_string()`呼び出しより明らかな誤認識・ノイズ（英字ノイズ・不自然なタイトル等）を減らします。ただし、Tesseract自体が誤認識する文字は完全には無くならないため、`ocr-check`で残った崩れを確認する運用は引き続き推奨します（詳細は[`docs/13_ocr_quality_check_workflow.md`](13_ocr_quality_check_workflow.md)参照）。
 
-Tesseract自身の信頼度スコアだけでは検出できない誤認識（実データでは、Tesseractが問題なしと判定したページに複数の重大な漢字誤読が残っていたケースを確認済み）については、macOS環境限定・完全に任意の機能として、`--ocr-engine tesseract+vision`でApple Vision OCRとの比較を利用できます（`bash scripts/build_apple_vision_ocr.sh`で事前にヘルパーをビルドする必要があります。未ビルド・macOS以外では自動的にTesseractのみへフォールバックし、通常の`build-all`は失敗しません）。比較結果は`output/ocr_comparison/review.html`等で確認でき、**`output/editable/lesson_pages.json`へ自動反映されることはありません**。詳細は[`docs/13_ocr_quality_check_workflow.md`](13_ocr_quality_check_workflow.md)「17. Apple Vision OCRとの比較」参照。
+Tesseract自身の信頼度スコアだけでは検出できない誤認識（実データでは、Tesseractが問題なしと判定したページに複数の重大な漢字誤読が残っていたケースを確認済み）については、macOS環境限定・完全に任意の機能として、`--ocr-engine tesseract+vision`でApple Vision OCRとの比較を利用できます（`bash scripts/build_apple_vision_ocr.sh`で事前にヘルパーをビルドする必要があります。未ビルド・macOS以外では自動的にTesseractのみへフォールバックし、通常の`build-all`は失敗しません）。比較結果は`output/ocr_comparison/review.html`等で確認でき、**`output/editable/lesson_pages.json`へ自動反映されることはありません**。`review.html`は元画像・Tesseract結果・Apple Vision結果を1ページずつ3列で並べ、文字単位の差分（置換・削除・追加）を色分け・下線スタイルでハイライト表示するため、どこが違うのか目視で見つけやすくなっています。各ページには編集可能な「確定テキスト」欄があり、Tesseract/Apple Visionのどちらかをコピーして手修正するか、「Tesseractを採用」／「Apple Visionを採用」を選ぶことでレビュー結果を記録できます（編集内容・選択状態はブラウザに自動保存され、「レビュー結果をJSONで書き出す」でダウンロードできます。これも既存の正式データを自動更新するものではありません）。詳細は[`docs/13_ocr_quality_check_workflow.md`](13_ocr_quality_check_workflow.md)「17. Apple Vision OCRとの比較」参照。
+
+### 6.5 review.htmlでのレビュー作業の確認項目
+
+- [ ] 各ページでTesseract/Apple Visionの表示が編集できない（読み取り専用）ことを確認する
+- [ ] 「確定欄へコピー」ボタンで、Tesseract/Apple Visionいずれかの全文が確定テキスト欄へ入ることを確認する
+- [ ] 確定欄に既に内容がある状態でコピーボタンを押すと、上書き確認が表示されることを確認する
+- [ ] 確定欄を手修正した内容が保持されることを確認する
+- [ ] 「Tesseractを採用」／「Apple Visionを採用」が同時に選べないことを確認する
+- [ ] 「元画像を要再確認」「確認完了」が採用チェックと独立してON/OFFできることを確認する
+- [ ] ページを再読み込みしても、確定テキスト・採用チェック・上記2項目の状態が保持されることを確認する
+- [ ] 「レビュー結果をJSONで書き出す」でJSONファイルがダウンロードされ、内容が期待通りであることを確認する
+- [ ] 「全レビュー状態をリセット」を押すと確認ダイアログが出て、実行後は状態が空に戻ることを確認する
+
+### 6.6 Claude Codeレビュー指示書（`CLAUDE_OCR_REVIEW.md`）の確認項目
+
+`--ocr-engine tesseract+vision`実行後、Apple Visionが利用できた場合は`output/ocr_comparison/CLAUDE_OCR_REVIEW.md`が自動生成されます。標準出力に表示される最後の1文（`output/ocr_comparison/CLAUDE_OCR_REVIEW.md を読み、記載された手順を最後まで実行してください。`）をコピーし、別のClaude Codeセッションへそのまま渡すだけで、追加の指示文を考える必要なくレビューを開始できます。
+
+- [ ] `build-all --ocr-engine tesseract+vision`実行後、標準出力にコピー可能な固定の1文が表示されることを確認する
+- [ ] `output/ocr_comparison/CLAUDE_OCR_REVIEW.md`が生成され、実際のページ総数・ページ番号・相対パスが記載されていることを確認する（絶対パス・OCR全文は含まれない）
+- [ ] `output/ocr_comparison/claude_review/README.md`が生成されていることを確認する（この時点では`pages/`・`progress.json`・`candidates.json`・`review_summary.md`はまだ存在しない）
+- [ ] Apple Visionが利用できない場合、指示書は生成されず、理由と再実行方法（`bash scripts/build_apple_vision_ocr.sh`）が表示されることを確認する
+- [ ] 指示書をClaude Codeへ渡し、追加の質問なしにページ別候補JSON（`claude_review/pages/page_NNN.json`）が1ページずつ保存されることを確認する
+- [ ] 作業を中断し、既存の候補JSONがあるページがスキップされ、未処理ページから再開されることを確認する
+- [ ] 全ページ完了後、`claude_review/candidates.json`（全体集約）と`claude_review/review_summary.md`（人間確認用サマリー）が生成されることを確認する
+- [ ] `output/editable/lesson_pages.json`・比較元の`summary.json`・ページ別比較JSON・元画像がいずれも変更されていないことを確認する
 
 ### 6.2 よくある状態と対処
 
