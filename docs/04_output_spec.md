@@ -273,6 +273,20 @@ bash scripts/setup_ocr_macos.sh
 
 `build-all`は`import-source`（→`imported_pages.json`+`output/assets/`）→`lesson-pages`（→`lesson_pages.json`）→`generate`/`canva`/`docx`/`pdf`/`scenario`/`review-report`を内部で順に実行する。`--mode`は`proofread`/`restructure`のみ（`generate`は元資料を使わないモードのため`build-all`の対象外。`generate`を使う場合は`lesson-pages --mode generate`を直接使う）。
 
+### Apple Vision OCRとの比較output（`output/ocr_comparison/`。`--ocr-engine tesseract+vision`指定時のみ・macOS専用・任意）
+
+`--ocr-engine tesseract+vision`を指定した場合のみ、既存のTesseract結果一式の生成後（`editable/lesson_pages.json`等、通常のパイプラインは一切変更しない）に、追加ステップとしてApple Vision OCRとの比較を実行し、`output_dir`直下に以下を生成する（`--ocr-engine`を指定しない場合、または`tesseract`を指定した場合は一切生成されない）。
+
+```text
+output/ocr_comparison/
+  summary.json          # 全体サマリー（機械可読。needs_reviewページ一覧・比較指標等）
+  summary.md            # 全体サマリー（人間可読）
+  pages/page_NNN.json   # ページごとの両エンジン結果・比較指標・不一致理由
+  review.html           # 元画像・両エンジン結果・不一致理由を1ページずつ並べた自己完結型HTML
+```
+
+詳細な比較指標・`needs_review`判定基準・設計思想は[`docs/13_ocr_quality_check_workflow.md`](13_ocr_quality_check_workflow.md)「17. Apple Vision OCRとの比較」を参照。**`output/editable/lesson_pages.json`は変更されない**（Apple Vision結果の自動反映は行わない）。`output/ocr_comparison/`は`output/`配下のためGit管理対象外（「input・output・logs・生成物のGit管理方針」参照）。
+
 ## 完成outputの形式選択とeditable中間ファイル（Phase 9）
 
 Phase 9で、完成outputの形式を`--output-format`で選べるようにし、また「編集して再生成するための中間ファイル」を正式なoutputとして位置づけた。

@@ -56,6 +56,7 @@ output/
 - `build-all --mode proofread/restructure`は、画像inputでOCRが実質使えない場合（Tesseract未導入・日本語言語データ無し・全ページOCR結果が空）、警告のうえ空データで成功させず、エラー終了する（`--allow-empty-ocr`でスキップ可。テスト・開発用途向け）。
 - 画像1枚のOCR自体は`src/ocr_engine.py`が担当する。複数前処理（原画像/拡大+グレースケール+コントラスト補正+シャープ化/二値化）・複数PSM（6/11）・信頼度/座標付き結果からの品質スコアによる最良候補選択・低品質時のみの追加前処理/領域分割再試行・ノイズ除去・辞書補正を行い、教材画像全般の取り込み時OCR品質を底上げする（詳細は[`docs/02_architecture.md`](docs/02_architecture.md)「`src/ocr_engine.py`」参照）。Tesseract自体の限界により誤認識が完全に無くなるわけではない。
 - OCR崩れの検出・修正候補生成は`ocr-check`、候補の一括承認は`approve-ocr-candidates`、反映は`apply-ocr-corrections`が担当する。自動承認・自動反映（画像から確定できない内容の推測）は行わない。詳細は[`docs/13_ocr_quality_check_workflow.md`](docs/13_ocr_quality_check_workflow.md)〜[`docs/15_llm_suggestion_candidates_workflow.md`](docs/15_llm_suggestion_candidates_workflow.md)参照。
+- `build-all --ocr-engine tesseract+vision`（macOS専用・完全に任意。既定は`tesseract`のまま）で、macOS標準のApple Vision OCR（`src/apple_vision_ocr.py`・`tools/apple_vision_ocr/`）をTesseractと並行実行し、両者の結果を比較（`src/ocr_compare.py`）して不一致の大きいページを`output/ocr_comparison/`へ`needs_review`として記録できる。**Apple Vision結果は`output/editable/lesson_pages.json`へ自動反映されない**（正式な編集対象は引き続きTesseract結果ベースの`editable/lesson_pages.json`のみ）。処理はローカルのVisionフレームワーク内で完結し、外部送信は行わない。詳細は[`docs/13_ocr_quality_check_workflow.md`](docs/13_ocr_quality_check_workflow.md)「Apple Vision OCRとの比較」参照。
 
 ## 6. input・output・logs・生成物のGit管理方針
 
@@ -67,6 +68,8 @@ output/
 | `logs/*.log`（実行ログ本体） | 対象外 |
 | `logs/evidence/.gitkeep` | 対象 |
 | `logs/evidence/<run_id>/`・`logs/evidence/latest.json`（検証エビデンス本体） | 対象外 |
+| `tools/apple_vision_ocr/`（Swiftソース・`Package.swift`・テスト） | 対象 |
+| `tools/apple_vision_ocr/.build/`（Swiftビルド成果物・ビルド済みバイナリ） | 対象外 |
 
 詳細は[`docs/04_output_spec.md`](docs/04_output_spec.md)「プロジェクト標準output構成」「実行ログ（logs/）の標準仕様」「検証エビデンス」、`.gitignore`を参照。
 

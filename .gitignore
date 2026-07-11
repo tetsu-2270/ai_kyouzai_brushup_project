@@ -28,3 +28,8 @@ venv/
 
 # 配布用ZIP（scripts/make_release_zip.sh で生成）
 *.zip
+
+# Apple Vision OCRヘルパー（tools/apple_vision_ocr/）のSwiftビルド成果物。
+# Swiftソース・Package.swift・ビルドスクリプトはGit管理対象、ビルド済みバイナリは対象外
+# （scripts/build_apple_vision_ocr.sh で毎回ローカルビルドする想定）
+tools/apple_vision_ocr/.build/

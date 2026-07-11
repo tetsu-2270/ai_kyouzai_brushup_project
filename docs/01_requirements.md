@@ -48,7 +48,7 @@ AI教材ブラッシュアップシステム
 |---|---|---|
 | `check-ocr` | OCR環境（tesseract/日本語言語データ/Homebrew）を診断する（Phase 10.1） | 必須機能（補助） |
 | `import-source` | 元資料（画像/PDF/PPTX）からテキスト・画像を自動取り込み、`imported_pages.json`（pages形式互換）+画像アセットを生成 | 必須機能 |
-| `build-all` | `import-source`→`lesson-pages`→完成output生成を一括実行（`--mode proofread\|restructure`、`--requirements`、`--output-format`、`--font-path`、`--allow-empty-ocr`）。作成者向けの主導線。画像inputでOCRが実質使えない場合、取り込みページが0件の場合、指定output-formatの成果物が生成されない場合はエラー終了する（Phase 10.1・10.2） | 必須機能 |
+| `build-all` | `import-source`→`lesson-pages`→完成output生成を一括実行（`--mode proofread\|restructure`、`--requirements`、`--output-format`、`--font-path`、`--allow-empty-ocr`、`--ocr-engine`）。作成者向けの主導線。画像inputでOCRが実質使えない場合、取り込みページが0件の場合、指定output-formatの成果物が生成されない場合はエラー終了する（Phase 10.1・10.2）。`--ocr-engine tesseract+vision`（既定は`tesseract`。macOS専用・任意）でApple Vision OCRとの比較を追加できる（今回追加） | 必須機能 |
 | `regenerate` | `output/editable/lesson_pages.json`（編集済み中間ファイル）から完成outputを再生成（`--output-format`、`--font-path`）。pagesが0件、または指定output-formatの成果物が生成されない場合はエラー終了する（Phase 10.2） | 必須機能 |
 | `lesson-pages` | 正データ`lesson_pages.json`を生成（`--mode proofread\|restructure\|generate`、`--requirements`、`--plan-output`） | 必須機能 |
 | `review-report` | `lesson_pages.json`の`role`/`source_page_no`を制作者確認用Markdownに整理 | 必須機能（制作者向け補助） |
@@ -105,6 +105,10 @@ AI教材ブラッシュアップシステム
 `import-source`/`build-all`の画像OCRは、単純に画像全体を`pytesseract.image_to_string()`へ渡すだけでなく、`src/ocr_engine.py`が複数の前処理（原画像・拡大+グレースケール+コントラスト補正+シャープ化・二値化）と複数PSM（6/11）でOCRし、信頼度・座標付き結果（`image_to_data`）から品質スコアで最良候補を選ぶ。品質が低い場合のみ、二値化やタイトル帯/本文帯・左右カラムの領域分割で追加試行する。低信頼度の英字ノイズ除去・`config/ocr_patterns.json`の高確信度置換・「〜」の誤認識（`70て80%`→`70〜80%`等）補正も行う。特定画像の座標・文字列はハードコードせず、同種の横長教材スライド画像全般に適用できる一般的な処理としている（詳細は`docs/02_architecture.md`「`src/ocr_engine.py`」参照）。
 
 ただし、Tesseract自体が誤認識する一部の文字・記号（フォント・レイアウトに起因するもの等）は、この改善後も完全には解消しない場合がある。これはOCRエンジン自体の限界であり、残った誤認識・要確認箇所は引き続き`ocr-check`以降の人間承認フロー（`docs/13`〜`docs/14`）で扱う想定。
+
+### Apple Vision OCRとの比較（macOS専用・任意・今回追加）
+
+Tesseract自身の信頼度スコア・品質判定は、単一エンジンの自己評価であるため原理的な限界がある（実データで、Tesseractが問題なしと判定したページに複数の重大な漢字誤読が残っていたことを確認済み）。`build-all --ocr-engine tesseract+vision`を指定すると、macOS標準のVisionフレームワーク（`VNRecognizeTextRequest`）による独立した第二のOCR結果を取得し、Tesseract結果と比較する。不一致の大きいページを`output/ocr_comparison/`へ`needs_review`として記録するが、**Apple Vision結果を`editable/lesson_pages.json`へ自動採用することはしない**（今回のスコープ外。将来のバージョンで別タスクとして検討）。既定（`--ocr-engine`省略時）はTesseractのみで、この機能を使わない限り既存の動作・要件に変化はない。詳細は`docs/13_ocr_quality_check_workflow.md`「17. Apple Vision OCRとの比較」参照。
 
 ## 対象外（現時点で未実装・意図的に対象外のもの）
 - DOCX形式の元資料取り込み（画像/PDF/PPTXのみ対応。`.doc`/`.docx`からの取り込みは未実装）

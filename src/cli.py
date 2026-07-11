@@ -38,6 +38,7 @@ from .ocr_check import (
     render_ocr_check_report_markdown,
     write_correction_candidates_json,
 )
+from .ocr_comparison import run_ocr_comparison_for_pages, write_comparison_outputs
 from .ocr_patterns import load_ocr_patterns
 from .output_clean import clean_known_outputs
 from .ocr_environment import (
@@ -97,6 +98,7 @@ def run_import_source(
     assets_dir: str | Path | None = None,
     quiet: bool = False,
     logger: ExecutionLogger | None = None,
+    diagnostics_sink: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     """元資料(画像/PDF/PPTX)からimported_pages.json互換のJSONを生成して書き出す。
 
@@ -110,10 +112,16 @@ def run_import_source(
     `logger`を渡すと、画像取り込み時のOCR品質診断（選択PSM・前処理・品質スコア・再試行有無等。
     `src/ocr_engine.py`参照）を`OCR_QUALITY`セクションとして実行ログへ記録する
     （`imported_pages.json`のスキーマ自体には影響しない）。
+
+    `diagnostics_sink`を明示的に渡すと、そのリストへ診断情報を追記する（呼び出し元が
+    診断内容を後続処理でも使いたい場合。例: `--ocr-engine tesseract+vision`でのTesseract/
+    Apple Vision比較。`src/ocr_comparison.py`参照）。省略時、`logger`があれば内部で新規リストを
+    作る（従来どおりの挙動）。
     """
     output_path = Path(output_path)
     resolved_assets_dir = Path(assets_dir) if assets_dir else output_path.parent / "assets"
-    diagnostics_sink: list[dict[str, object]] = [] if logger else None
+    if diagnostics_sink is None and logger:
+        diagnostics_sink = []
     imported = import_source(input_path, resolved_assets_dir, quiet=quiet, diagnostics_sink=diagnostics_sink)
     write_text(output_path, json.dumps(imported, ensure_ascii=False, indent=2) + "\n")
     if logger and diagnostics_sink:
@@ -370,6 +378,7 @@ def build_all(
     font_path: str | None = None,
     allow_empty_ocr: bool = False,
     clean_output: bool = False,
+    ocr_engine: str = "tesseract",
     logger: ExecutionLogger | None = None,
 ) -> None:
     """元資料(画像/PDF/PPTX)から成果物一式を一括生成する（build-allコマンドの本体）。
@@ -407,6 +416,17 @@ def build_all(
     `output_dir`配下の未知の手動ファイルには一切触れない。
     安全のため`output_dir`がプロジェクトディレクトリ配下または`/tmp`配下であること等を検証し、
     条件を満たさない場合は削除を行わずエラーにする（詳細は`src/output_clean.py`参照）。
+
+    `ocr_engine`（`--ocr-engine`。既定`"tesseract"`）に`"tesseract+vision"`を指定すると、
+    画像inputの場合に限り、既存のTesseract結果に加えてmacOS標準のApple Vision OCR
+    （`src/apple_vision_ocr.py`）も実行し、両者を比較する（`src/ocr_compare.py`/
+    `src/ocr_comparison.py`）。比較結果は`output/ocr_comparison/`へ保存し、不一致の大きい
+    ページを`needs_review`として記録する。**Apple Vision結果は`output/editable/lesson_pages.json`
+    へ自動反映されない**（正式な編集対象は引き続きTesseract結果ベースの`editable/lesson_pages.json`
+    のみ）。既定の`"tesseract"`を指定した場合（＝`--ocr-engine`を指定しない場合）、この処理は
+    一切実行されず、既存の動作から変化しない。Apple Visionが利用できない環境（macOS以外・
+    ヘルパー未ビルド）でも、安全にTesseractのみの結果へフォールバックし、比較不能を理由に
+    全ページを`needs_review`にはしない。
     """
     output_dir = Path(output_dir)
     assets_dir = output_dir / "assets"
@@ -434,8 +454,12 @@ def build_all(
 
     # 画像inputの場合、OCR関連の警告は_validate_ocr_precondition()側で集約して表示するため、
     # import_source()側の重複表示をquiet=Trueで抑制する（Phase 10.2追加修正）。
+    # tesseract_diagnosticsは、--ocr-engine tesseract+vision時にApple Visionとの比較で使う
+    # （Tesseract側のスコア・品質判定・処理時間をpage_noごとに参照するため）。
+    tesseract_diagnostics: list[dict[str, object]] = []
     imported = run_import_source(
-        input_path, imported_pages_path, assets_dir, quiet=(input_kind == "image"), logger=logger
+        input_path, imported_pages_path, assets_dir, quiet=(input_kind == "image"), logger=logger,
+        diagnostics_sink=tesseract_diagnostics,
     )
     pages = imported.get("pages", [])
 
@@ -475,6 +499,38 @@ def build_all(
 
     resolved_format = resolve_output_format(output_format, input_kind)
     _generate_formatted_outputs(document, output_dir, resolved_format, font_path=font_path, logger=logger)
+
+    if ocr_engine == "tesseract+vision" and input_kind == "image":
+        _run_ocr_engine_comparison(pages, assets_dir, output_dir, tesseract_diagnostics, logger=logger)
+
+
+def _run_ocr_engine_comparison(
+    pages: list[dict[str, object]],
+    assets_dir: Path,
+    output_dir: Path,
+    tesseract_diagnostics: list[dict[str, object]],
+    logger: ExecutionLogger | None = None,
+) -> None:
+    """`--ocr-engine tesseract+vision`指定時のみ呼ばれる追加ステップ。既存のTesseract結果
+    （`pages`の`lines`。再実行しない）に対し、Apple Vision OCRを実行して比較し、
+    `output/ocr_comparison/`へ保存する。`output/editable/lesson_pages.json`は変更しない。
+    """
+    summary = run_ocr_comparison_for_pages(pages, assets_dir, tesseract_diagnostics=tesseract_diagnostics)
+    paths = write_comparison_outputs(output_dir, summary)
+    if logger:
+        logger.add_section("OCR_COMPARISON", {
+            "vision_helper_available": summary.vision_helper_available,
+            "vision_unavailable_reason": summary.vision_unavailable_reason,
+            "total_pages": summary.total_pages,
+            "compared_pages": summary.compared_pages,
+            "needs_review_pages": summary.needs_review_pages,
+            "tesseract_only_review_pages": summary.tesseract_only_review_pages,
+            "vision_only_review_pages": summary.vision_only_review_pages,
+            "both_engines_review_pages": summary.both_engines_review_pages,
+        })
+        logger.record_generated_file(paths["summary_json"])
+        logger.record_generated_file(paths["summary_md"])
+        logger.record_generated_file(paths["review_html"])
 
 
 def regenerate(
@@ -578,6 +634,19 @@ def main() -> None:
             "画像input+proofread/restructureでOCRが実質使えない場合（Tesseract未導入・"
             "日本語言語データ無し・全ページOCR結果が空）でも、エラー終了せず空データのまま処理を"
             "続行する（既定は無効＝エラー終了する。テスト・開発用途向け）"
+        ),
+    )
+    build_all_parser.add_argument(
+        "--ocr-engine",
+        choices=["tesseract", "tesseract+vision"],
+        default="tesseract",
+        help=(
+            "使用するOCRエンジン（既定: tesseract。従来通りTesseractのみを使用し、挙動は変わらない）。"
+            "tesseract+visionを指定すると、画像inputの場合に限りmacOS標準のApple Vision OCRも実行し、"
+            "両エンジンの結果を比較してoutput/ocr_comparison/へ保存する（不一致が大きいページは"
+            "needs_review扱いになる）。Apple Vision結果はoutput/editable/lesson_pages.jsonへ"
+            "自動反映されない。macOS以外・Apple Visionヘルパー未ビルドの環境では自動的に"
+            "tesseractのみへフォールバックする（scripts/build_apple_vision_ocr.sh参照）"
         ),
     )
     build_all_parser.add_argument(
@@ -852,7 +921,7 @@ def main() -> None:
             build_all(
                 args.input, args.mode, args.output_dir, args.requirements,
                 args.output_format, args.compat_output, args.font_path,
-                args.allow_empty_ocr, args.clean_output, logger=logger,
+                args.allow_empty_ocr, args.clean_output, args.ocr_engine, logger=logger,
             )
         elif args.command == "regenerate":
             regenerate(args.input, args.output_format, args.output_dir, args.font_path, logger=logger)
