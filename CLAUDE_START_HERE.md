@@ -2,7 +2,11 @@
 
 このファイルは、Claude Codeを起動した直後に最初に読み込ませるための指示書です。
 
-**実行確認について**: 通常のファイル編集・`pytest`実行・`run_sample.sh`実行・ドキュメント更新は、都度「実行してよいですか」と確認せず最後まで進めてください。認証・課金・外部反映などユーザー本人の操作が必要になる場合のみ事前に明示してください。詳細は[`CLAUDE_RULES.md`](CLAUDE_RULES.md)「実行確認の運用ルール（重要）」を参照。
+**必読順（開発ルールの3階層）**: 1. `~/ai-development-rules/DEVELOPMENT_RULES.md`（全開発共通ルールの正本） → 2. `~/.claude/CLAUDE.md`（Claude Codeグローバル入口） → 3. `PROJECT_RULES.md`（このプロジェクト固有ルールの正本） → 4. `CLAUDE_RULES.md`（Claude Code固有の実装手順・完了報告方法） → 5. プロジェクトの設計書（下記「最初にClaude Codeへ貼る指示」参照）。`~/ai-development-rules/DEVELOPMENT_RULES.md`が存在しない環境では、`PROJECT_RULES.md`と`CLAUDE_RULES.md`だけで作業してください。
+
+**実行確認について**: 通常のファイル編集・`pytest`実行・`run_sample.sh`実行・ドキュメント更新は、都度「実行してよいですか」と確認せず最後まで進めてください。認証・課金・外部反映などユーザー本人の操作が必要になる場合のみ事前に明示してください。詳細は`~/ai-development-rules/DEVELOPMENT_RULES.md`「2. 確認を減らす」を参照。
+
+**検証・テスト結果の報告について**: 実装完了後は、個別に`pytest`や`run_sample.sh`を実行して画面出力をそのまま報告するのではなく、正式な検証入口`bash scripts/run_verification.sh --purpose "<今回の目的>"`を実行し、結果は`logs/evidence/<run_id>/`へ保存してください。完了報告では長い実行ログを貼らず、エビデンス保存先（`logs/evidence/latest.json`が指す`run_id`）と総合結果だけを短く報告してください。詳細は`PROJECT_RULES.md`「9. このプロジェクトの正式な検証入口とエビデンス保存先」・[`docs/04_output_spec.md`](docs/04_output_spec.md)「検証エビデンス」参照。
 
 ## 最初にClaude Codeへ貼る指示
 
@@ -11,9 +15,12 @@
 
 最初に必ず以下を確認してください。
 
+- ~/ai-development-rules/DEVELOPMENT_RULES.md（存在する場合。全開発共通ルールの正本）
+- ~/.claude/CLAUDE.md（存在する場合。Claude Codeグローバル入口）
+- PROJECT_RULES.md（このプロジェクト固有ルールの正本）
+- CLAUDE_RULES.md
 - README.md
 - CLAUDE.md
-- CLAUDE_RULES.md
 - docs/README.md（docs配下の各文書の役割一覧。まずここで何を読むべきか確認する）
 - docs/00_redesign_v2.md（現行の3モード[proofread/restructure/generate]・restructure再構成ロジックの正式な設計書。必ず読むこと）
 - docs/01_requirements.md

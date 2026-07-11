@@ -15,6 +15,13 @@ output/
 logs/*
 !logs/.gitkeep
 
+# 検証エビデンス置き場（logs/evidence/<run_id>/）。ディレクトリ自体はGit管理対象、
+# 実行結果本体（manifest.json/summary.md/コマンドログ/latest.json等）は対象外
+# （docs/04_output_spec.md「検証エビデンス」参照）
+!logs/evidence/
+logs/evidence/*
+!logs/evidence/.gitkeep
+
 # 仮想環境
 .venv/
 venv/

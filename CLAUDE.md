@@ -1,48 +1,26 @@
-# Claude Code向け補足
+# Claude Code向け補足（プロジェクト薄入口）
 
-作業開始前に必ず以下を確認してください。
+このファイルは、Claude Codeがこのプロジェクトで作業する際の薄い入口です。全開発共通ルールやプロジェクト固有ルールの全文はここに置かず、以下の正本を参照してください。
 
-- `CLAUDE_START_HERE.md`
-- `CLAUDE_RULES.md`
-- `docs/README.md`（docs配下の各文書の役割一覧。まずここで何を読むべきか確認する）
-- `docs/00_redesign_v2.md`（現行の3モード[proofread/restructure/generate]・restructure再構成ロジックの正式な設計書。必ず読むこと）
-- `docs/06_claude_code_workflow.md`
-
-必要に応じて `docs/07_api_integration_design.md`（将来のローカルLLM活用・API連携設計。プロジェクト方針上、優先はローカルLLMで外部API連携は必要になった場合の選択肢）・`docs/08_user_acceptance_test.md`（Phase 8: 作成者向けの主導線。元資料[画像/PDF/PPTX]を置いて`build-all`を実行する実利用テスト手順）・`docs/99_implementation_review_brief.md`と`docs/99_phase7_review_2026-07-05.md`（レビュー履歴・既知の制約）も確認してください。
-
-**作成者向けの主導線は`build-all`コマンドです。** `examples/sample_pages.json`のようなpages形式JSONを直接手作業で作らせる運用は不採用です（開発・テスト用の内部形式として`examples/`に残すのは可）。
-
----
-
-# Claude Code 実装指示書
-
-あなたはこのプロジェクトの実装担当です。
-ユーザーは開発専任ではないため、説明よりも動く成果物を優先してください。
-
-## 最重要方針
-- 既存設計を壊さない。
-- 不明点で止まらず、合理的な仮定で実装する。
-- 変更したファイル、実行コマンド、次にやることを最後に短く示す。
-- 1タスクずつコミットしやすい単位で作業する。
-- ファイル編集・`pytest`・`run_sample.sh`・ドキュメント更新は都度確認せず最後まで進める。認証・課金・外部反映が必要な場合のみ事前に明示する（詳細は`CLAUDE_RULES.md`「実行確認の運用ルール」参照）。
-
-## 実装順序
-1. `docs/01_requirements.md` を読み、要件を把握する。
-2. `docs/02_architecture.md` を読み、構成に従う。
-3. `src/` 配下のCLI雛形を完成させる。
-4. `examples/sample_pages.json` を入力にしてMarkdown生成を動かす。
-5. `tests/` を追加・実行する。
-
-## 禁止事項
-- 勝手に大規模フレームワークへ変更しない。
-- ユーザーに何度も確認質問をしない。
-- APIキーや秘密情報をコードに直書きしない。
-- 出力形式を勝手に変えない。
-
-## 完了条件
-以下が動けば初期実装完了。
-
-```bash
-python -m src.cli generate --input examples/sample_pages.json --output output/brushup.md
-python -m src.cli canva --input examples/sample_pages.json --output output/canva_design.md
+```text
+全開発共通ルールは ~/ai-development-rules/DEVELOPMENT_RULES.md を正とする。
+このプロジェクト固有ルールは PROJECT_RULES.md を正とする。
+Claude Code固有の実装手順・完了報告方法は CLAUDE_RULES.md を正とする。
+CLAUDE.md にはClaude Code固有の入口と必読案内だけを記載する。
 ```
+
+## 1. 読む順序
+
+1. `~/ai-development-rules/DEVELOPMENT_RULES.md`（全開発共通ルールの正本）
+2. `~/.claude/CLAUDE.md`（Claude Codeグローバル入口。上記1を前提とする）
+3. [`PROJECT_RULES.md`](PROJECT_RULES.md)（このプロジェクト固有ルールの正本）
+4. [`CLAUDE_RULES.md`](CLAUDE_RULES.md)（Claude Code固有の実装手順・完了報告方法）
+5. [`CLAUDE_START_HERE.md`](CLAUDE_START_HERE.md)（起動直後に貼る指示テンプレート。上記4件を含む必読順を明記）
+
+`~/ai-development-rules/DEVELOPMENT_RULES.md`が存在しない環境では、`PROJECT_RULES.md`と`CLAUDE_RULES.md`だけで安全に作業できます。共通ルールが無いことだけを理由に作業を止めないでください。
+
+## 2. 必要な必読文書
+
+`PROJECT_RULES.md`「7. このプロジェクトの必読設計書」を参照してください。特に`docs/README.md`（docs配下の役割一覧）と`docs/00_redesign_v2.md`（3モードの正式な設計書）は必ず読んでください。
+
+過去の初回実装指示書（Phase 1時点）は[`archive/CLAUDE_initial_implementation_instructions.md`](archive/CLAUDE_initial_implementation_instructions.md)に保管しています（実行済み・現行ルールでは参照不要）。

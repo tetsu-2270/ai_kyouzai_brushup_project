@@ -4,7 +4,7 @@
 
 ## プロジェクト標準output構成（Phase 9.2時点で確定・共通設計ルール）
 
-**Phase 9.2までに確定した、このプロジェクトの共通設計ルールです。** [`CLAUDE_RULES.md`](../CLAUDE_RULES.md)「プロジェクト設計ルール」にも同内容の要約があります。今後のPhaseでこのルールを変更する場合は、理由と影響範囲を説明して承認を得てから変更してください。それ以外の場合、以下は今後のPhase作業でも維持される前提として参照してください。
+**Phase 9.2までに確定した、このプロジェクトの共通設計ルールです。** [`PROJECT_RULES.md`](../PROJECT_RULES.md)「4. output構成」にも同内容の要約があります。今後のPhaseでこのルールを変更する場合は、理由と影響範囲を説明して承認を得てから変更してください。それ以外の場合、以下は今後のPhase作業でも維持される前提として参照してください。
 
 ```text
 output/
@@ -101,6 +101,100 @@ Authorization: Bearer xxxxx  → Authorization: Bearer [REDACTED]
 ```
 
 `.env`や認証情報ファイルの中身自体をログへ出力する処理は存在しない。マスクは「値が単一トークン（空白区切り）で表現される」ケースを対象としており、複数行にまたがる秘密情報（PEM形式の秘密鍵など）は部分的なマスクにとどまる場合がある点に留意する。
+
+## 検証エビデンス（`logs/evidence/`。テスト・検証結果の永続保存）
+
+`logs/`のCLI実行ログとは別に、`pytest`・`scripts/run_sample.sh`等の**検証結果そのもの**を`logs/evidence/<run_id>/`へ永続保存する仕組みがある。目的は、Claude Codeが一度実行した検証結果を、Codexがローカルファイルから直接確認できるようにし、確認のためだけの再実行（時間・計算資源・外部API利用料の重複）を避けることである。
+
+```text
+logs/
+  evidence/
+    .gitkeep                            # Git管理対象（logs/evidence/ディレクトリ自体を追跡するため）
+    latest.json                         # 最新の完了済みrun_idを指すポインタ。Git管理対象外
+    <run_id>/                           # 例: 20260711_103735_9179。Git管理対象外
+      manifest.json                     # 機械可読な実行結果一式
+      summary.md                        # 人間・Codexが短時間で判断できる要約
+      commands/
+        001_pytest.log                  # コマンドごとの標準出力・標準エラー・終了コード
+        002_run_sample.log
+      pytest/
+        junit.xml                       # pytest --junitxml の出力
+```
+
+### 正式な実行入口
+
+```bash
+bash scripts/run_verification.sh
+```
+
+内部で`python3 -m src.verification_runner`（`src/verification_evidence.py`のライブラリを利用）を呼び出し、以下を順に実行する。
+
+1. `python3 -m pytest -q --junitxml=logs/evidence/<run_id>/pytest/junit.xml`
+2. `bash scripts/run_sample.sh`
+
+片方が失敗しても、もう片方は続けて実行する（失敗を記録したうえで残りも実行し、最終的な終了コードは失敗を反映する）。実教材を使う`build-all`等の受け入れ確認も、同じ`EvidenceRun`の仕組み（`src/verification_evidence.py`）から呼び出せるが、実教材・OCR本文は`logs/evidence/`へコピーしない（ファイルの存在・サイズ・SHA-256のみ記録する）。
+
+### `run_id`と過去結果の扱い
+
+`run_id`は時刻＋衝突防止用のランダムサフィックス（例: `20260711_103735_9179`）。**過去の`run_id`ディレクトリは削除・上書きしない**。最新の完了済み結果は`logs/evidence/latest.json`が指す（`manifest.json`/`summary.md`の書き出しが完了した後にのみ更新するため、`latest.json`は常に完成済みの実行を指す）。
+
+### `manifest.json`の主なフィールド
+
+```json
+{
+  "schema_version": 1,
+  "run_id": "...",
+  "purpose": "...",
+  "started_at": "...", "ended_at": "...", "duration_seconds": 0,
+  "overall_status": "passed",
+  "overall_exit_code": 0,
+  "python_version": "...", "platform": "...",
+  "git": { "branch": "...", "head": "...", "is_dirty": true, "status_summary": ["M path", "?? path"] },
+  "commands": [
+    {
+      "index": 1, "name": "pytest", "command": ["python3", "-m", "pytest", "-q", "--junitxml=..."],
+      "started_at": "...", "ended_at": "...", "duration_seconds": 0,
+      "exit_code": 0, "status": "passed",
+      "log_file": "commands/001_pytest.log", "artifacts": ["pytest/junit.xml"],
+      "pytest_summary": { "total": 607, "passed": 607, "failed": 0, "errors": 0, "skipped": 0 }
+    }
+  ],
+  "external": []
+}
+```
+
+`git`はコミットハッシュ・ブランチ・`git status --porcelain`のパス一覧のみを記録し、ファイル内容や秘密情報は記録しない。`external`は、将来外部API・有料処理を検証する場合にサービス名・リクエスト数・追跡ID・概算費用等を記録するための構造で、**今回のバージョンでは実際には使用しない**（外部APIを呼び出す処理自体を追加していない）。
+
+### 失敗・中断時の扱い
+
+コマンドが非ゼロ終了・例外・タイムアウトになっても、`manifest.json`/`summary.md`は可能な限り確定させる（`status`は`passed`/`failed`/`timeout`/`error`/`interrupted`のいずれかで、成功していない実行を`passed`として記録しない）。`Ctrl-C`等の中断時も`interrupted`として記録してから終了する。`manifest.json`/`latest.json`はいずれも一時ファイルへ書き出してから置換する方式（`os.replace`）で、書き込み途中の状態を完成済みとして誤読しない。
+
+### 秘密情報マスク
+
+`src/execution_logger.py`の`mask_secrets()`をそのまま再利用する（重複実装を避ける）。コマンドの引数・標準出力・標準エラー・Gitステータス等、`manifest.json`/コマンドログへ書き出すすべての文字列値に適用する。`.env`や認証情報ファイルの中身を読み取って記録する処理は存在しない。
+
+### Git管理・ZIP方針
+
+| 対象 | Git | ZIP |
+|---|---|---|
+| `logs/evidence/.gitkeep` | 対象 | 対象 |
+| `logs/evidence/<run_id>/`（実行結果本体） | **対象外** | **対象外**（`logs/*.log`とは異なり、機密性の高い実行文脈・Git差分要約を含み得るため、配布ZIPには含めない方針とした） |
+| `logs/evidence/latest.json` | 対象外 | 対象外 |
+
+`.gitignore`は以下のように設定する。
+
+```gitignore
+logs/*
+!logs/.gitkeep
+
+!logs/evidence/
+logs/evidence/*
+!logs/evidence/.gitkeep
+```
+
+### Codexによる確認運用
+
+Codexは、Claude Codeの実装・テスト後、まず`logs/evidence/latest.json`と対応する`manifest.json`/`summary.md`を確認する。対象コミット・作業ツリー状態・実行内容が現在の確認対象と一致する場合、同じテストを再実行しない。エビデンスが無い・破損している・対象コードが実行後に変更されている・必要なテストが未実行の場合のみ再実行を検討する（詳細は`AGENTS.md`参照）。
 
 ## 成功判定の方針（実質失敗を正常終了扱いにしない。Phase 10.2で追加）
 

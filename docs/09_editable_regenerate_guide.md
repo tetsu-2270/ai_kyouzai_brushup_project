@@ -1,6 +1,6 @@
 # 09 editable中間ファイルの編集・再生成ガイド
 
-> `output/`配下のディレクトリ構成（`editable/`/`rendered/`/`canva/`/`exports/`/`compat/`）は、[`CLAUDE_RULES.md`](../CLAUDE_RULES.md)「プロジェクト設計ルール」・[`docs/04_output_spec.md`](04_output_spec.md)「プロジェクト標準output構成」で定義済みの共通設計ルールです。本書はそのうち「`output/editable/lesson_pages.json`を編集して再生成する」運用に絞って、具体的な手順を説明します。
+> `output/`配下のディレクトリ構成（`editable/`/`rendered/`/`canva/`/`exports/`/`compat/`）は、[`PROJECT_RULES.md`](../PROJECT_RULES.md)「4. output構成」・[`docs/04_output_spec.md`](04_output_spec.md)「プロジェクト標準output構成」で定義済みの共通設計ルールです。本書はそのうち「`output/editable/lesson_pages.json`を編集して再生成する」運用に絞って、具体的な手順を説明します。
 
 ## 1. 編集してよいのはeditable/lesson_pages.jsonだけ
 

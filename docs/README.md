@@ -2,13 +2,15 @@
 
 このプロジェクトのドキュメント一式です。**初めて見る人は、まず[`00_redesign_v2.md`](00_redesign_v2.md)で3モード(`proofread`/`restructure`/`generate`)の背景を把握したうえで、[`01_requirements.md`](01_requirements.md)→[`02_architecture.md`](02_architecture.md)の順に読むことを推奨します。**
 
+**開発ルール（誰がどう作業を進めるか）を探している場合は、ここではなくリポジトリ直下の[`PROJECT_RULES.md`](../PROJECT_RULES.md)（このプロジェクト固有ルールの正本）・`CLAUDE_RULES.md`（Claude Code向け実装手順）・`AGENTS.md`（Codex向け入口）を参照してください。全開発共通ルールは`~/ai-development-rules/DEVELOPMENT_RULES.md`が正本です。本一覧（`docs/`）は、教材ブラッシュアップシステム自体の要件・設計・出力仕様を扱います。**
+
 | ファイル | 位置づけ | 補足 |
 |---|---|---|
 | [`00_redesign_v2.md`](00_redesign_v2.md) | v2再設計時点の一次資料（歴史的資料） | 3モード構想・restructure再設計の背景。Phase6以降の`role`/`--plan-output`/`review-report`等は反映されていないため、細部は`01`〜`04`を正とする |
 | [`01_requirements.md`](01_requirements.md) | **現行要件** | 実装済みCLIコマンド、3モードの方針、`lesson_pages.json`正データ方針、`input/`/`output/`除外方針など |
 | [`02_architecture.md`](02_architecture.md) | **現行アーキテクチャ** | 実在する`src/`モジュール構成、実在するデータモデル、処理フロー |
 | [`03_data_format.md`](03_data_format.md) | データ形式（開発者向け） | `pages`形式JSONのスキーマ（`imported_pages.json`もこの形式。作成者は直接作らない） |
-| [`04_output_spec.md`](04_output_spec.md) | **CLI・出力仕様** | 元資料自動取り込み（`import-source`/`build-all`）、OCR前提の事前チェック・`check-ocr`診断・`build-all`のOCR必須モード（`proofread`/`restructure`）がOCR不能時にエラー終了する仕様・`--allow-empty-ocr`（Phase 10.1）、実行ログ（`logs/`）の標準仕様・成功判定の方針（Phase 10.2）、完成output形式選択・editable中間ファイル・再生成（`--output-format`/`regenerate`。Phase 9）、正式output（`editable/`/`canva/`/`exports/`）と後方互換output（`compat/`）の整理（Phase 9.1〜9.2）、`lesson_pages.json`のスキーマ、各派生出力の生成元、restructureプラン・`review-report`のCLI仕様 |
+| [`04_output_spec.md`](04_output_spec.md) | **CLI・出力仕様** | 元資料自動取り込み（`import-source`/`build-all`）、OCR前提の事前チェック・`check-ocr`診断・`build-all`のOCR必須モード（`proofread`/`restructure`）がOCR不能時にエラー終了する仕様・`--allow-empty-ocr`（Phase 10.1）、実行ログ（`logs/`）の標準仕様・成功判定の方針（Phase 10.2）、検証エビデンス（`logs/evidence/`）の永続保存仕様（Phase 10.3）、完成output形式選択・editable中間ファイル・再生成（`--output-format`/`regenerate`。Phase 9）、正式output（`editable/`/`canva/`/`exports/`）と後方互換output（`compat/`）の整理（Phase 9.1〜9.2）、`lesson_pages.json`のスキーマ、各派生出力の生成元、restructureプラン・`review-report`のCLI仕様 |
 | [`05_implementation_tasks.md`](05_implementation_tasks.md) | 実装タスク進捗 | Phase 1〜9の完了状況チェックリスト |
 | [`06_claude_code_workflow.md`](06_claude_code_workflow.md) | Claude Code運用手順 | ZIP展開〜実装〜確認までの一般的な進め方 |
 | [`07_api_integration_design.md`](07_api_integration_design.md) | 将来のローカルLLM活用・API連携設計メモ | OCR/ブラッシュアップ/Canva設計へのローカルLLM組み込み構想（外部API連携は必要になった場合の選択肢。未実装・設計のみ） |
@@ -31,10 +33,11 @@
 - **「このプロジェクトはどこまで終わっているか」を知りたい** → `05_implementation_tasks.md` と `python3 -m pytest -q` の実行結果
 - **元資料（画像/PDF/PPTX）があり、実際の教材素材で試したい** → `08_user_acceptance_test.md`（`build-all`の手順）と`feedback_template.md`（結果の記録）
 - **元資料が無く、要件定義だけから新規に教材を作りたい（新規構築）** → `README.md`「`lesson-pages`の3モード（v2.0）」の`generate`モード（`build-all`は元資料前提のため対象外）
-- **output構成・editable中間ファイル・source情報の扱いという共通設計ルールを確認したい** → `04_output_spec.md`「プロジェクト標準output構成（Phase 9.2時点で確定・共通設計ルール）」（要約は`CLAUDE_RULES.md`「プロジェクト設計ルール」にもある）
+- **output構成・editable中間ファイル・source情報の扱いという共通設計ルールを確認したい** → `04_output_spec.md`「プロジェクト標準output構成（Phase 9.2時点で確定・共通設計ルール）」（要約は`../PROJECT_RULES.md`「4. output構成」にもある）
 - **`output/editable/lesson_pages.json`を編集して再生成したい・日本語フォントの文字化けを直したい** → `09_editable_regenerate_guide.md`
 - **画像取り込み後にテキストが空になる・OCRがうまくいかない・`build-all --mode proofread`がエラー終了する** → `python3 -m src.cli check-ocr`または`bash scripts/check_ocr_env.sh`で診断（`04_output_spec.md`「OCR前提の事前チェック」、`08_user_acceptance_test.md`「OCRについての注意」参照）
 - **なぜエラーになったか・実行内容を後から確認したい** → `logs/YYYYMMDD_HHMMSS_<command>.log`（`04_output_spec.md`「実行ログ（logs/）の標準仕様」、`08_user_acceptance_test.md`「実行ログと成功判定の考え方」参照）
+- **pytest/run_sample.shの検証結果を後から（別セッション・Codex等から）確認したい、同じ検証の再実行を避けたい** → `bash scripts/run_verification.sh`で`logs/evidence/<run_id>/`へ結果を保存する（`04_output_spec.md`「検証エビデンス」、`AGENTS.md`「テスト・検証の正式な実行方法」参照）
 - **教材の構成チェック・文章のブラッシュアップ案をChatGPT/Claude等にもらいたい** → `11_llm_handoff_workflow.md`（`llm-handoff`コマンド。LLM出力の自動取り込みは行わない）
 - **LLMの改善案をどう`editable/lesson_pages.json`に反映すればよいか迷う** → `12_llm_review_apply_workflow.md`（`edit-plan-template`コマンドで採用判断シートを作ってから手編集する）
 - **`llm-handoff`のLLM回答がOCR誤字の指摘ばかりになる** → `13_ocr_quality_check_workflow.md`（`ocr-check`コマンドでLLM投入前にOCR崩れ候補・修正候補を先に確認する）
