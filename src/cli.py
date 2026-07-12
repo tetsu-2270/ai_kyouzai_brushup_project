@@ -40,6 +40,7 @@ from .ocr_check import (
 )
 from . import ocr_claude_review
 from .ocr_comparison import run_ocr_comparison_for_pages, write_comparison_outputs
+from . import ocr_review_apply
 from .ocr_patterns import load_ocr_patterns
 from .output_clean import clean_known_outputs
 from .ocr_environment import (
@@ -576,6 +577,52 @@ def _print_claude_ocr_review_notice(
         })
 
 
+def _page_list_or_none(pages) -> str:
+    return ", ".join(str(p) for p in pages) if pages else "なし"
+
+
+def _print_ocr_review_apply_notice(plan, paths, *, mode: str, result=None) -> None:
+    """`apply-ocr-review`実行後、標準出力へ固定書式の判定バナーと次の操作を表示する。"""
+    verdict = "passed" if plan.passed else "failed"
+    lines: list[str] = []
+
+    if mode == "dry_run":
+        lines.append(f"OCR_REVIEW_APPLY_DRY_RUN: {verdict}")
+        lines.append(f"変更予定ページ: {_page_list_or_none([p.page_no for p in plan.changed_pages]) if plan.passed else 'なし'}")
+        lines.append(f"変更なしページ: {_page_list_or_none([p.page_no for p in plan.unchanged_pages]) if plan.passed else 'なし'}")
+        lines.append(f"反映不可ページ: {_page_list_or_none([p.page_no for p in plan.not_reflectable_pages])}")
+        if plan.errors:
+            lines.append(f"全体エラー: {'; '.join(plan.errors)}")
+        lines.append(f"レポート: {paths.report_md_path}")
+        lines.append("次の操作:")
+        if plan.passed:
+            lines.append(f"python3 -m src.cli apply-ocr-review --output-dir {paths.output_dir} --apply")
+        else:
+            lines.append("反映不可ページを解消してから（Phase 10.9レビューUIでの確定 → Claude Codeレビューの再実行）、再度dry-runを実行してください。")
+    else:
+        lines.append(f"OCR_REVIEW_APPLY: {verdict}")
+        if plan.passed:
+            applied_pages = [p.page_no for p in plan.changed_pages] if (result and result.wrote_changes) else []
+            unchanged_pages = [p.page_no for p in plan.unchanged_pages] if result else [p.page_no for p in plan.pages]
+            lines.append(f"反映ページ: {_page_list_or_none(applied_pages)}")
+            lines.append(f"変更なしページ: {_page_list_or_none(unchanged_pages)}")
+            lines.append(f"バックアップ: {result.backup_path if (result and result.backup_path) else '(作成していません。変更なしのため)'}")
+        else:
+            lines.append(f"反映不可ページ: {_page_list_or_none([p.page_no for p in plan.not_reflectable_pages])}")
+            if plan.errors:
+                lines.append(f"全体エラー: {'; '.join(plan.errors)}")
+        lines.append(f"レポート: {paths.report_md_path}")
+        lines.append("次の操作:")
+        if plan.passed and result and result.wrote_changes:
+            lines.append(f"python3 -m src.cli regenerate --input {paths.lesson_pages_path} --output-format all")
+        elif plan.passed:
+            lines.append("変更はありませんでした（追加の操作は不要です）。")
+        else:
+            lines.append("反映不可ページを解消してから（Phase 10.9レビューUIでの確定 → Claude Codeレビューの再実行）、再度実行してください。")
+
+    print("\n".join(lines))
+
+
 def regenerate(
     input_path: str,
     output_format: str,
@@ -873,6 +920,39 @@ def main() -> None:
         "--dry-run", action="store_true", help="出力JSONを生成せず、approved化予定の件数だけ確認する"
     )
 
+    apply_ocr_review_parser = subparsers.add_parser(
+        "apply-ocr-review",
+        help="Claude Codeによる画像照合レビュー（claude_review/candidates.json）を、"
+        "確認操作（--dry-run→--apply）を経てeditable/lesson_pages.jsonへ安全に反映する"
+        "（ocr-check/apply-ocr-correctionsとは別のワークフロー）",
+    )
+    apply_ocr_review_parser.add_argument(
+        "--output-dir", required=True,
+        help="build-allの出力先ディレクトリ（例: output/ocr_engine_eval）。"
+        "既定では配下のeditable/lesson_pages.json・ocr_comparison/claude_review/candidates.json等を使う",
+    )
+    apply_ocr_review_parser.add_argument(
+        "--lesson-pages", default=None, help="入力lesson_pages.jsonの上書き指定（既定: <output-dir>/editable/lesson_pages.json）"
+    )
+    apply_ocr_review_parser.add_argument(
+        "--candidates", default=None,
+        help="入力candidates.jsonの上書き指定（既定: <output-dir>/ocr_comparison/claude_review/candidates.json）",
+    )
+    apply_ocr_review_parser.add_argument(
+        "--report-dir", default=None,
+        help="レポート出力先ディレクトリの上書き指定（既定: <output-dir>/ocr_comparison/claude_review）",
+    )
+    apply_ocr_review_parser.add_argument(
+        "--pages", default=None, help='対象ページの絞り込み（例: "1,4,7-11"）。省略時はcandidates.json全ページが対象'
+    )
+    apply_ocr_review_mode_group = apply_ocr_review_parser.add_mutually_exclusive_group(required=True)
+    apply_ocr_review_mode_group.add_argument(
+        "--dry-run", action="store_true", help="実際には書き込まず、反映予定の内容だけレポートに出す（--applyと排他）"
+    )
+    apply_ocr_review_mode_group.add_argument(
+        "--apply", action="store_true", help="検証に成功した場合に限り、実際にlesson_pages.jsonへ反映する（--dry-runと排他）"
+    )
+
     apply_llm_suggestions_parser = subparsers.add_parser(
         "apply-llm-suggestions",
         help="ChatGPT/Claude等の回答Markdownを読み込み、ページ別の改善候補として構造化"
@@ -1087,6 +1167,46 @@ def main() -> None:
                 logger.record_generated_file(args.output)
             if args.report:
                 logger.record_generated_file(args.report)
+        elif args.command == "apply-ocr-review":
+            paths = ocr_review_apply.resolve_paths(
+                args.output_dir,
+                lesson_pages_path=args.lesson_pages,
+                candidates_path=args.candidates,
+                report_dir=args.report_dir,
+            )
+            plan = ocr_review_apply.validate_and_plan(paths, pages_spec=args.pages)
+            mode = "apply" if args.apply else "dry_run"
+            apply_result = None
+            if args.apply and plan.passed:
+                apply_result = ocr_review_apply.apply_document(plan, paths)
+            ocr_review_apply.write_apply_reports(plan, paths, mode=mode, result=apply_result)
+            validate_generated_file(paths.report_json_path, "apply-ocr-review(report json)")
+            validate_generated_file(paths.report_md_path, "apply-ocr-review(report md)")
+            logger.add_section("INPUT", {
+                "output_dir": str(paths.output_dir),
+                "lesson_pages_path": str(paths.lesson_pages_path),
+                "candidates_path": str(paths.candidates_path),
+                "pages": args.pages,
+                "mode": mode,
+            })
+            logger.add_section("OCR_REVIEW_APPLY", {
+                "passed": plan.passed,
+                "target_pages": plan.target_pages,
+                "reflectable_pages": [p.page_no for p in plan.reflectable_pages],
+                "not_reflectable_pages": [p.page_no for p in plan.not_reflectable_pages],
+                "errors": plan.errors,
+                "wrote_changes": apply_result.wrote_changes if apply_result else False,
+            })
+            logger.record_generated_file(paths.report_json_path)
+            logger.record_generated_file(paths.report_md_path)
+            if apply_result and apply_result.wrote_changes:
+                logger.record_generated_file(paths.lesson_pages_path)
+                if apply_result.backup_path:
+                    logger.record_generated_file(apply_result.backup_path)
+            _print_ocr_review_apply_notice(plan, paths, mode=mode, result=apply_result)
+            if not plan.passed:
+                logger.error("apply-ocr-reviewの検証に失敗しました（詳細はレポート参照）")
+                raise SystemExit(1)
         elif args.command == "apply-llm-suggestions":
             document = load_lesson_document(args.lesson_pages)
             suggestions_text = load_llm_suggestions_markdown(args.suggestions)

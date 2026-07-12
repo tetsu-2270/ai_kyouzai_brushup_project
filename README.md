@@ -375,6 +375,18 @@ python3 -m src.cli approve-ocr-candidates --input output/ocr_correction_candidat
 
 `ocr_correction_candidates.json`のうち、条件に一致する明確な候補（既定: 高重要度・高確信度の辞書一致replace候補）だけを一括で`status: approved`にします（**`editable/lesson_pages.json`への反映は行いません**。削除候補・元画像確認が必要な候補・推定修正候補は、CLI引数の指定内容にかかわらず自動approved化の対象外です）。`approve-ocr-candidates`→`apply-ocr-corrections`の順に実行してください。詳細は[`docs/14_apply_ocr_corrections_workflow.md`](docs/14_apply_ocr_corrections_workflow.md)を参照してください。
 
+### Claude Code画像照合レビュー候補を反映（`apply-ocr-review`）
+
+```bash
+# 1. 分析のみ（書き込みなし）
+python3 -m src.cli apply-ocr-review --output-dir output/ocr_engine_eval --dry-run
+
+# 2. 内容を確認したうえで実反映
+python3 -m src.cli apply-ocr-review --output-dir output/ocr_engine_eval --apply
+```
+
+`--ocr-engine tesseract+vision`＋Claude Codeによる画像照合レビュー（`CLAUDE_OCR_REVIEW.md`の指示に従って生成された`claude_review/candidates.json`）の結果を、`editable/lesson_pages.json`へ安全に反映します。**上記の`apply-ocr-corrections`/`approve-ocr-candidates`とは別のワークフローです**（対象候補のスキーマが異なります。ページ全文単位の候補を扱います）。`--dry-run`/`--apply`は相互排他かつ必須で、反映前に自動でバックアップを作成します。詳細は[`docs/16_apply_ocr_review_workflow.md`](docs/16_apply_ocr_review_workflow.md)を参照してください。
+
 ### LLM手作業投入用ファイルを生成（`llm-handoff`）
 
 ```bash

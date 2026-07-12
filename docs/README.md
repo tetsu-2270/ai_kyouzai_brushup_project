@@ -21,6 +21,7 @@
 | [`13_ocr_quality_check_workflow.md`](13_ocr_quality_check_workflow.md) | **OCR品質チェック・補正候補データ生成ワークフロー** | `ocr-check`コマンドの使い方、なぜLLM投入前にOCR確認が必要か、`ocr_check_report.md`/`ocr_correction_candidates.json`の読み方、重要度の見方、よくあるOCR誤認識例、システムと人間の役割分担、`config/ocr_patterns.json`（外部辞書）の育て方 |
 | [`14_apply_ocr_corrections_workflow.md`](14_apply_ocr_corrections_workflow.md) | **承認済みOCR補正候補の反映ワークフロー** | `apply-ocr-corrections`コマンドの使い方、`status: approved`の候補だけを反映する仕組み、元ファイルを上書きしないこと、`ocr_apply_report.md`の読み方、反映されない主な理由、`approve-ocr-candidates`による高重要度候補の一括approved化 |
 | [`15_llm_suggestion_candidates_workflow.md`](15_llm_suggestion_candidates_workflow.md) | **LLM改善案の構造化候補生成ワークフロー** | `apply-llm-suggestions`コマンドの使い方、LLM回答Markdownの想定形式・表記揺れ対応、`llm_suggestion_candidates.json`の読み方、statusの使い方、将来の`apply-approved-llm-suggestions`へのつながり |
+| [`16_apply_ocr_review_workflow.md`](16_apply_ocr_review_workflow.md) | **Claude Code画像照合レビュー候補の反映ワークフロー** | `apply-ocr-review`コマンドの使い方（`--dry-run`→`--apply`）、`proposed_text`から`title`/`body`/`summary`/`image_text`/`canva_prompt`/`video_scene`への反映ルール、反映不可ページの扱い、バックアップ・原子的書き込み・冪等性、`apply-ocr-corrections`との違い |
 | [`feedback_template.md`](feedback_template.md) | フィードバックシート（テンプレート） | 実利用テストの結果を記録するチェックリスト。コピーして使う |
 | [`99_implementation_review_brief.md`](99_implementation_review_brief.md) | 時点レビュー・スナップショット | Phase 1〜4完了時点（2026-07-04）の記録。以降更新しない運用ルールは同ファイル冒頭を参照 |
 | [`99_phase7_review_2026-07-05.md`](99_phase7_review_2026-07-05.md) | 時点レビュー・スナップショット | Phase 7（restructure品質改善・出力のMarkdown混入対策一式）完了時点（2026-07-05）の記録 |
@@ -44,6 +45,7 @@
 - **実データで新しいOCR崩れパターンを見つけたので辞書に追加したい** → `13_ocr_quality_check_workflow.md`「OCRパターン外部辞書の育て方」（`config/ocr_patterns.json`をコード修正なしで編集する）
 - **OCR補正候補を承認したので`lesson_pages.json`に反映したい** → `14_apply_ocr_corrections_workflow.md`（`apply-ocr-corrections`コマンドで`status: approved`の候補だけを安全に反映する）
 - **高重要度のOCR候補を1件ずつapprovedにするのが手間** → `14_apply_ocr_corrections_workflow.md`「高重要度OCR候補の一括approved化」（`approve-ocr-candidates`コマンドで明確な候補だけ一括承認する）
+- **Claude Codeが画像照合レビューした`claude_review/candidates.json`を`lesson_pages.json`に反映したい** → `16_apply_ocr_review_workflow.md`（`apply-ocr-review --dry-run`→`--apply`。`apply-ocr-corrections`とは別のコマンド）
 - **ChatGPT/Claude等の改善案をどう`lesson_pages.json`に反映すればよいか迷う** → `15_llm_suggestion_candidates_workflow.md`（`apply-llm-suggestions`コマンドでLLM回答を構造化候補に変換してから採用判断する）
 - **過去のレビュー経緯を知りたい** → `99_implementation_review_brief.md`（ただし現行仕様の正ではない点に注意）
 

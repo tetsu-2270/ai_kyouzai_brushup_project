@@ -1,6 +1,8 @@
 # 14 承認済みOCR補正候補の反映ワークフロー（`apply-ocr-corrections`）
 
 > `ocr-check`が生成した`ocr_correction_candidates.json`のうち、人間が`status: approved`に変更した候補だけを`lesson_pages.json`へ安全に反映するコマンドです。プロジェクト方針（README.md「プロジェクト方針：外部API非依存・ローカルLLM移行前提」参照）のとおり、**OCR候補の自動承認は行いません**。あくまで人間が承認した候補だけを機械的に反映します。
+>
+> **`apply-ocr-review`（[`docs/16_apply_ocr_review_workflow.md`](16_apply_ocr_review_workflow.md)）とは別のコマンドです。** このページで扱う`apply-ocr-corrections`はsubstring単位のOCR補正候補（`ocr-check`が生成したもの）を対象にしますが、`apply-ocr-review`はページ全文単位のClaude Code画像照合レビュー候補（`claude_review/candidates.json`）を対象にします。候補スキーマ・安全条件は混在していません。
 
 ## 1. `apply-ocr-corrections`の目的
 
