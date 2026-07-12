@@ -605,3 +605,888 @@ Phase 10.10でClaude Codeが画像照合レビューを行い`claude_review/cand
 - `--apply`成功後の`regenerate`自動実行は行っていない（推奨方針どおり、次に実行するコマンドを案内するだけに留めた。非破壊性の観点からは自動実行しても問題ない可能性があるが、今回は明示操作を維持した）
 - 候補の"古さ"検出は、ページ番号・`source_image`・比較元JSONとの突き合わせ・`progress.json`の整合性チェックまでに留まる。ハッシュ値等によるフィンガープリント方式の厳密な鮮度検証は、Phase 10.10の既存candidatesスキーマの後方互換性を壊さない範囲で将来追加できる余地がある（今回は未実装）
 - Phase 10.9のブラウザ側JSON書き出し（`adopted_source`/`final_text`等のスキーマ）は今回の反映対象外（`claude_review/candidates.json`のみを対象とした）。将来対応する場合も、別の入力アダプタとして追加し、本モジュールのスキーマ・安全条件と混在させないことを推奨する
+
+## Phase 10.7〜10.13のロードマップ（最終目的との関係）
+
+Phase 10.7以降の一連のPhaseは、それぞれ独立した技術課題ではなく、次のロードマップの各段階を
+担っている。**途中技術（OCR精度そのもの）を最終成果物と取り違えないよう、ここに明記する。**
+
+```text
+OCR取得（Phase 10.4/10.6: Tesseract単体の精度改善）
+→ OCR画像照合（Phase 10.7/10.8/10.9/10.10: Apple Visionとの比較・差分ハイライト・
+  確定テキスト編集UI・Claude Codeによる元画像照合レビュー）
+→ OCR確定原文保存（Phase 10.11: apply-ocr-reviewによるeditable/lesson_pages.jsonへの安全な反映）
+→ 本文ブラッシュアップ（Phase 10.13: OCR確定原文を証拠として保持したまま、教材本文を
+  分かりやすく改善する）
+→ 人間承認・正式本文反映（Phase 10.13: apply-content-brushupによる明示的な反映）
+→ 画像構成・デザイン（Phase 10.12: prepare-image-brushupによるAIエージェント向けデザイン設計）
+→ 決定論的画像描画（Phase 10.12: render-brushupによるブラッシュアップ済み教材画像の生成）
+```
+
+このプロジェクトの最終目的は「元教材画像から正確な原文を取得し、教材本文を分かりやすく改善し、
+内容に合ったページ構成・画像デザインを作り、ブラッシュアップ済み教材を出力すること」であり、
+OCRで文字を正しく読み取ること自体は最終目的ではなく、その前提条件（上記ロードマップの前半）に
+過ぎない。**Phase 10.12だけでは「確定済み文字列を一字一句変更しない」という制約により、実際に
+改善されたのは画像レイアウトだけで、文章表現自体は評価・改善されていなかった。** Phase 10.13で
+本文ブラッシュアップ工程が加わったことで、初めてロードマップ全体が完成し、最終目的に到達する。
+
+## Phase 10.12: 確定済みOCR本文による教材画像ブラッシュアップ生成（`prepare-image-brushup` / `render-brushup`）
+
+Phase 10.11までで正確な本文（`editable/lesson_pages.json`）の確定・反映が完成したが、それを実際の
+教材画像として再設計・生成する導線が無かった。既存の`rendered/`は`source_image`があれば元画像を
+そのままコピーするだけで、「ブラッシュアップ済み教材画像」と呼べる成果物ではない。本Phaseで、
+AI作業エージェント（Claude Code/Codex）がデザインを設計し、決定論的なレンダラー（Pillow）が
+確定済み本文を正確に描画する、3段階の導線（`prepare-image-brushup`→AIエージェントによる設計→
+`render-brushup`）を実装した。詳細仕様は[`docs/17_image_brushup_workflow.md`](17_image_brushup_workflow.md)を参照。
+
+### 実装
+
+- [x] `src/image_brushup_design.py`（新規）: `render_ai_image_brushup_instructions(document, output_dir)`
+  （`AI_IMAGE_BRUSHUP.md`本体の生成。Claude Code・Codexどちらでも使える製品非依存の指示書。実データから
+  埋め込むのはページ総数・ページ番号一覧・相対パス等の構造情報のみで、本文は埋め込まない）、
+  `render_design_readme()`、`write_design_entry_points()`、デザインJSON検証（`validate_design_page()`:
+  `schema_version`/`page_no`/`source_image`一致（パストラバーサル・絶対パス拒否）/`canvas`（サイズ範囲・
+  色コード）/`theme`（色コード）/`template`（許可値）/`blocks`（許可type・`source_field`は`title`/`body`/
+  `summary`のみ・`text`等での本文複製を明示的に拒否・style（font_size/font_weight/alignment/color/
+  padding）検証）、`validate_manifest()`（ページ欠落・重複検出）を実装
+- [x] `src/brushup_renderer.py`（新規）: `render_design_page()`（1ページ分の決定論的描画。`title`/
+  `summary`/`body`/`note`/`checklist`/`steps`/`quote`/`divider`/`spacer`の全ブロック種別に対応。
+  1パス目でブロック高さを測定し2パス目で縦方向に中央寄せして描画する2パス方式）、`_fit_text_block()`
+  （spec仕様どおりの縮小手順: 指定サイズ→余白縮小→行間縮小→最小フォントまで縮小→[bodyブロックのみ]
+  2段組みへ変更、の優先順で最初に収まる組み合わせを採用。デザインJSON側が明示的に`columns: 2`を
+  指定した場合はオーバーフローの有無に関わらず常に2段組みで描画する）、`verify_not_source_copy()`
+  （ファイルハッシュ・ピクセルデータ比較による元画像コピー検出）、`load_design_pages()`（manifest+
+  ページ別デザインJSONの読み込み・検証）、`render_all_pages()`、`render_report_json/markdown()`、
+  `render_comparison_html()`（外部CDN・外部CSS・外部JS非依存の自己完結HTML）を実装。本文の取得元は
+  常に`LessonPage`（`title`/`summary`はそのまま、`body`は既存の`clean_dialogue_lines()`を再利用して
+  話者・台詞ペアへ分解）で、デザインJSON内に本文は一切存在しない
+- [x] `src/image_renderer.py`の`resolve_font_path()`/`warn_missing_japanese_font()`を再利用（重複実装
+  せず）。フォント読み込み自体は太字対応のため`brushup_renderer.py`内に独自の`_load_font()`（W3/W4→W6
+  等のファイル名置換によるボールド代替探索）を実装
+- [x] `src/cli.py`: `prepare-image-brushup`（`--output-dir`必須）・`render-brushup`（`--output-dir`
+  必須、`--font-path`任意）の2サブコマンドを追加。`_print_image_brushup_prepare_notice()`/
+  `_print_image_brushup_render_notice()`で固定書式のバナーを表示
+
+### テスト追加（Phase 10.12、新規47件）
+
+- [x] `tests/test_image_brushup_design.py`（24件）: 指示書へのページ総数/相対パス埋め込み・本文非埋め込み・
+  絶対パス非埋め込み・固定ページ数非依存（3/137ページ）、`README.md`生成、全ブロックtype受け入れ、
+  未知テンプレート拒否、page_no不一致拒否、ページ欠落/重複検出、source_image不一致・絶対パス・
+  パストラバーサル拒否、本文複製（`text`等のフィールド）拒否、不正色コード拒否、負のfont_size拒否、
+  canvas範囲外拒否、未許可source_field拒否、未対応schema_version拒否、空blocks拒否
+- [x] `tests/test_brushup_renderer.py`（16件）: PNG生成、`lesson_pages.json`由来の文字列がそのまま
+  描画される（text_match）こと、丸数字・長音・括弧等の特殊文字保持、全ブロックtype描画、2段組み
+  （明示指定時）、オーバーフロー前の段階的縮小、収まらない場合の失敗（省略記号"…"を使わないこと）、
+  元画像コピー検出（同一ファイル/異なるファイル）、`render_all_pages`が元画像をコピーしないこと、
+  `load_design_pages`のmanifest検証（正常系/欠落検出/manifest不在/source_image不一致）、
+  レポート・comparison.html生成（外部URL不使用）のend-to-end確認
+- [x] `tests/test_cli_image_brushup.py`（7件）: `prepare-image-brushup`のREADME/指示書生成・コピー
+  可能な1文表示・絶対パス非表示・`--output-dir`必須、`render-brushup`のデザイン未作成時のクリーンな
+  失敗、実際の画像生成・レポート生成・`text_match`確認・既存`rendered/`非変更・元画像非変更、
+  オーバーフロー時の非ゼロ終了、`lesson_pages.json`非変更
+- [x] 既存903件（Phase 10.11時点856件+今回47件）すべて成功（`pytest -q`で確認）
+
+### 実データ確認（`output/ocr_engine_eval/`の専用コピー、11ページ）
+
+既存の評価用成果物を変更しないよう、`/tmp`配下の専用コピーに対して実行した。
+
+- `prepare-image-brushup`実行後、`brushup_design/AI_IMAGE_BRUSHUP.md`・`README.md`が生成され、
+  標準出力にコピー可能な1文が表示されることを確認した
+- 実際に元画像11ページすべてを視覚確認したうえで（`assets/page_NNN.jpeg`、1706x960の横長画像。
+  暖色グラデーション枠・クリーム色カード・濃いワインレッドの文字という共通デザインを確認）、
+  ページごとにデザインJSONを作成した。Page1（導入・ルール提示）は`title_body`、Page3（キャラクター例
+  2件を左右比較で提示する構成を元画像で確認）は`two_column`（`columns: 2`）、Page2/4〜11
+  （①〜⑩の単一の質問＋説明という共通構造を元画像で確認）は`question`（本文を`note`ブロックで
+  枠囲みにして質問の重要性を強調）を採用した
+- `render-brushup`実行後、11ページすべてが成功（`IMAGE_BRUSHUP_RENDER: passed`、失敗0件）。
+  `template_counts`は`title_body: 1 / question: 9 / two_column: 1`
+- Page1の受け入れ基準（「まず」。Phase 10.11で確定済み）、Page3の2段組み（キャラクターT/Bの左右
+  比較を維持）、Page7の「苦労」「些細」「もし」「発信」、Page11の「⑩」（丸数字保持）が、いずれも
+  生成画像へ正しく反映されていることを目視で確認した
+- 全11ページで`text_match: true`・`overflow: false`（打ち切りなし）を確認した
+- 生成画像11件のファイルハッシュ・ピクセルデータが対応する元画像と異なることを確認した
+  （`verify_not_source_copy()`によるコード上の検証、および目視確認の両方）
+- `comparison.html`を生成し、元画像とブラッシュアップ画像を横並びで確認できることを確認した
+- 既存の`output/ocr_engine_eval/`（実際の評価用ディレクトリ）・`rendered/`・`editable/lesson_pages.json`・
+  `assets/`のいずれも変更されていないことを確認した（作業はすべて`/tmp`配下の専用コピーで実施）
+
+### 今回実装しなかったもの・制限事項
+
+- デザインJSONの`source_field`はページ単位のフィールド全体（`title`/`body`/`summary`）を参照する
+  粗粒度の設計。フィールドの一部（本文の特定の1行だけ等）を異なるブロックへ個別に割り当てることは
+  未対応（将来、bodyの行単位分割参照に対応する場合も、既存の粗粒度スキーマとの後方互換性を保つ設計が
+  望ましい）
+- 元画像の複雑な配色（グラデーション背景等）を自動抽出してテーマ色へ反映する機能は無く、
+  AIエージェントが元画像を見て手動で近似色を選ぶ設計
+- 画像生成AI（背景・挿絵素材専用）との連携は未実装（指示書内でも「今回は使用しない」旨を明記）
+- 元画像内の文字を画像素材としてそのまま再利用する機能は無い（意図的に未実装。誤字混入を防ぐため）
+- 実データ確認は11ページだったが、指示書生成・検証ロジック自体は固定ページ数に依存しない設計・
+  テスト（3ページ・137ページでの検証）で確認している。100ページ規模での実際のAIエージェントによる
+  デザイン設計作業そのものは今回実施していない
+
+## Phase 10.12 追加修正: 実データレビュー指摘によるデザイン品質の是正
+
+Phase 10.12実装直後、`AI_IMAGE_BRUSHUP.md`の指示に従って実データ11ページのデザインJSONを作成し
+`render-brushup`した生成画像を人間がレビューした結果、次の指摘を受けた。**指摘1〜3は実装（レンダラー・
+スキーマ）の欠陥であり、指摘4はデザインJSONの作り方（AI作業エージェントの設計判断）の問題だった。**
+
+1. 「枠外に題名を入れるのであれば、枠内には不要」（タイトルが`title`ブロックと`body`ブロックの
+   両方に重複表示されていた）
+2. 「単純に元ファイルと記載されている内容が一緒、全くブラッシュアップされていない」「何だったら
+   劣化してる。元ファイルは大事なとこは大きくなっていたりするが、作成した画像は均一で
+   メッセージ性が何も感じられない」（`body`全体を1つのブロックへ均一な文字サイズで詰め込んで
+   おり、元画像にある「問いかけを大きく・補足説明は小さく」という情報階層が失われていた）
+3. 「ページ３とか構成が変わっていて、何の事か分からない。元画像をみて構成が伝わるように再構成」
+   （Page3の2段組みが単純な行数の半分割で、「例1）キャラクターT」の途中で列が切り替わり
+   「例2）キャラクターB」の内容と混在していた）
+4. 「枠の余白が大きすぎて邪魔。それで中の文字が小さくなって読みにくくなるとか論外」（`padding`を
+   30px超に設定していたため、shrink-to-fitが余白確保のために文字サイズを不必要に縮小していた）
+
+### 実装（是正内容）
+
+- [x] `src/brushup_renderer.py`: `_paragraph_lines_for_field()`に`line_range`（`[start, end]`。
+  0始まり、`end`は`null`で末尾まで）引数を追加。`source_field`の段落の一部だけをブロックが参照
+  できるようにし、**既存の行を並べ替えたり複製したりせず**、同じ本文の異なる部分を複数のブロックへ
+  分けて文字サイズ・太さ・箱の有無を変えられるようにした（指摘1・2の是正）
+- [x] `_measure_columns()`を全面書き換え: 従来は折り返し済みの行を単純に半分の行数で機械的に
+  分割していたが、**段落の境界を保ったまま**（1つの段落の折り返し行が左右に分裂しないように）
+  段落単位で列を割り当てる方式に変更。さらに`split_at`（段落インデックス）を指定すると、
+  その位置で厳密に列を分けられるようにした（指摘3の是正）
+- [x] `note`ブロックが`columns`/`split_at`を無視していた欠陥を修正（従来`columns`は`body`
+  ブロックでしか効かなかった。`note`ブロックでの2段組み利用は実データレビューで初めて発覚した
+  実装漏れ）
+- [x] `footer.show_source_notice`が固定文言「※無断転載禁止」をレンダラー内にハードコードして
+  自動描画していた実装を廃止（本文に実在する同内容の注記行と二重表示されていたため）。
+  同フラグは元画像ファイル名を小さく表示するトレーサビリティ用途に変更した
+- [x] `src/image_brushup_design.py`: デザインJSONスキーマに`blocks[].line_range`・
+  `blocks[].split_at`を追加し検証ロジックを実装。`AI_IMAGE_BRUSHUP.md`の指示書本文へ、
+  情報階層の再現・タイトル重複の回避・`split_at`の使い所・余白の目安を「5.7 実データレビューで
+  判明した設計ルール」として明記し、以降にこの指示書を使うAIエージェントが同じ問題を
+  繰り返さないようにした（詳細は[`docs/17_image_brushup_workflow.md`](17_image_brushup_workflow.md)
+  「5.7」参照）
+
+### テスト追加（9件）
+
+- [x] `tests/test_brushup_renderer.py`（+9件）: `line_range`によるタイトル重複行の除外、
+  `line_range`の`start`/`end`指定、`line_range`を使ったbodyブロックでのタイトル非重複描画、
+  `_measure_columns`が段落を分裂させないこと、`split_at`で意味区切りどおりに列振り分けされること、
+  `note`ブロックの`columns: 2`+`split_at`が機能すること（今回の実装漏れの回帰テスト）、
+  デザインJSON検証が`line_range`/`split_at`を正しく受理・拒否すること
+- [x] 既存912件（追加修正前903件+今回9件）すべて成功（`pytest -q`で確認）
+
+### 実データでの再検証
+
+`/tmp`配下の専用コピーで修正後のデザインJSON（問いかけ=大・太字/補足説明=枠囲み中サイズ/注記=
+小・muted、Page3は`split_at`でキャラクターT/Bを厳密分割、`padding`を30px超から8〜20px程度へ
+縮小）を作成し`render-brushup`で再生成、11ページ全て成功・目視で改善を確認したうえで、
+実際に`output/ocr_engine_eval/`（既存の評価用ディレクトリ本体）のデザインJSONを差し替えて
+`render-brushup`を再実行し、11ページ全て成功したことを確認した。`editable/lesson_pages.json`・
+元画像は変更していない。
+
+## Phase 10.12 追加修正2: 再生成結果への第2回レビュー指摘（本文の分裂・2段組みの内容混入・改行位置）
+
+上記の追加修正1を適用した再生成結果を人間が再度レビューし、次の指摘を受けた。
+
+1. 「題名と本文の分け方が変。この構成なら①〜の部分は本文の中に入っているべき」（元画像は
+   問いかけ「①〜」と補足説明が同じ1枚のカードに収まっているが、追加修正1では問いかけを
+   `title`同様に枠なしで独立させてしまい、「本文の一部が本文の外に浮いている」ように見えていた）
+2. 「３ぺーじ　無題転載禁止が本文になっているので抜く」（Page3の2段組みブロックの`line_range`が
+   注記行（※無断転載禁止）まで含んでおり、右列の箇条書き最後の項目のように見えていた）
+3. 「でそもそも本文が全く変更ないけど、文として１００点とおもっているってことなの？」（本文の
+   文言を一切変更しない設計方針についての確認。Phase 10.7〜10.11から一貫する意図的な安全設計
+   であり、文言の質自体は今回のスコープ外である旨を回答した。文言改善が必要な場合は別工程として
+   追加検討する）
+4. 「枠の余白が大きすぎて邪魔。それで中の文字が小さくなって読みにくくなるとか論外」（追加修正1の
+   後日、Page3の2段組み内で「頭の固さ」「鼻が利く」を含む行が、左右均等割りの列幅にわずかに
+   収まらず、閉じ括弧だけが次行へ追い出される不自然な改行が発生。「右ブロックをもう少し右に
+   ずらせばいい」という具体的な指示を受けた）
+
+### 実装（是正内容）
+
+- [x] `src/brushup_renderer.py`: `type: "group"`ブロックを新設（`_measure_group()`/`_draw_group()`）。
+  複数の子ブロック（`title`/`summary`/`body`のみ）を1つの共有背景の中へ上から順に積み重ねて
+  描画する。子ブロックごとに`line_range`・文字サイズ・太さを変えられるが、背景は1つだけ
+  （指摘1の是正）
+- [x] Page3のデザインJSONを、2段組みブロックの`line_range`から注記行（インデックス14）を除外し、
+  他ページと同様の独立した小さい注記ブロックへ分離（指摘2の是正）
+- [x] `_measure_columns()`/`_fit_text_block()`/`_draw_paragraph_block()`に`column_ratio`
+  （左列の幅比率。既定0.5）を追加。測定時と描画時で同じ計算式（`_column_widths()`）を使うことで
+  ずれを防止。Page3の2段組みへ`column_ratio: 0.58`を適用し、左列（キャラクターTの箇条書き）を
+  やや広げることで、「頭の固さ」「鼻が利く」を含む行が1行に収まるようにした（指摘4の是正）
+- [x] `src/image_brushup_design.py`: `group`ブロックのスキーマ検証（子blockは`title`/`summary`/
+  `body`のみ・`columns`不可・再帰的に`_validate_block()`で検証）、`column_ratio`の検証
+  （0.1〜0.9の数値）を追加。`AI_IMAGE_BRUSHUP.md`指示書の4.3〜4.5節・5.7節を、`group`ブロックと
+  `column_ratio`の使い方・第2回レビューで判明したルールを反映して更新
+
+### テスト追加（6件）
+
+- [x] `tests/test_brushup_renderer.py`（+6件）: `group`ブロックが1つの共有背景で描画されること、
+  `group`の子blockに許可されない`type`を拒否、空の`blocks`を拒否、`_column_widths()`が
+  `column_ratio`に応じて左右幅を変えること、`column_ratio`で不自然な改行が回避されること
+  （均等割りでは2行になる行が、広げた列幅では1行に収まることを実測して確認）、範囲外の
+  `column_ratio`を拒否
+- [x] 既存918件（追加修正1時点912件+今回6件）すべて成功（`pytest -q`で確認）
+
+### 実データでの再検証
+
+`/tmp`配下の専用コピーで再修正版デザインJSON（Page1/2/4〜11は`group`で問いかけ+補足説明を
+1枚のカードに統合、Page3は`group`（問いかけ+導入説明）+`column_ratio: 0.58`付き2段組み
+（例1/例2）+独立した注記ブロックの3ブロック構成）を作成・検証（スキーマエラー0件）・
+`render-brushup`実行（11/11成功、`text_match`全ページtrue、Page3の該当行が1行に収まることを
+目視確認）したうえで、実際に`output/ocr_engine_eval/`のデザインJSONを差し替えて
+`render-brushup`を再実行し、11ページ全て成功したことを確認した。`editable/lesson_pages.json`・
+元画像は変更していない。
+
+### 残課題（追加修正2時点）
+
+- `group`は子ブロックに`title`/`summary`/`body`のみ許可し、`checklist`/`steps`/`quote`や
+  ネストした`group`は今回未対応（必要になった場合は別途拡張を検討）
+- `column_ratio`は数値を人間・AIエージェントが目視で判断して指定する運用であり、左右の
+  実際の折り返し結果を見て自動調整する仕組みは無い
+- 本文の文言そのものの質的改善（言い回し・分かりやすさ）は、上記指摘3への回答のとおり
+  引き続き今回のスコープ外
+
+## Phase 10.13: OCR確定原文を保持した教材本文ブラッシュアップ（`prepare-content-brushup` / `apply-content-brushup`）
+
+Phase 10.12は「確定済み文字列を一字一句変更しない」という制約のもとで実装されたため、実際に
+改善されたのは画像レイアウトだけで、文章表現自体は評価・改善されていなかった。本Phaseで、
+OCR確定原文を変更不能な証拠として保持したまま、AI作業エージェント（Claude Code/Codex）が
+教材本文を分かりやすく改善する候補を作成し、人間が明示操作（`--dry-run`→`--apply`）で
+`editable/lesson_pages.json`へ反映する導線を実装した。本文が更新された場合、古いPhase 10.12
+デザインJSONでそのまま描画してしまわないよう、`lesson_pages.json`のハッシュをデザイン
+manifestへ記録・照合する仕組みも追加した。詳細仕様は
+[`docs/18_content_brushup_workflow.md`](18_content_brushup_workflow.md)を参照。
+
+### 実装
+
+- [x] `src/content_brushup.py`（新規）: `resolve_paths()`（`ContentBrushupPaths`）、
+  `build_snapshot()`/`write_snapshot()`/`check_snapshot_status()`（OCR確定原文スナップショットの
+  作成・SHA-256記録・既存スナップショットとの一致/不一致判定。既存の作業中候補を黙って
+  破棄しないための基盤）、`render_ai_content_brushup_instructions()`（AIエージェント向け指示書。
+  「OCR確定は文章完成を意味しない」を明記し、本文全文は埋め込まない）、
+  `validate_candidate_page()`/`validate_candidates_aggregate()`（`original`のスナップショット
+  完全一致・`before`/`after`の実在確認・`change_type`/`risk_level`許可値・`risk: high`と
+  `requires_human_review`の整合等を検証）、`render_content_diff()`（Phase 10.8と同じ
+  「元の文字列を先に分割してからhtml.escape」の安全な手順を踏襲した、原文/改善案向けの独立した
+  差分関数）、`render_review_html()`/`render_review_summary_markdown()`を実装
+- [x] `src/content_brushup_apply.py`（新規）: `ContentApplyPlan`/`ContentApplyResult`
+  データクラスと`validate_and_plan()`/`apply_document()`の2関数構成（Phase 10.11の
+  `ocr_review_apply.py`と同じ設計パターン）。対象範囲内で1ページでも反映不可条件
+  （`risk_level: high`・`requires_human_review: true`・スキーマ不正等）を満たす場合は
+  対象範囲全体を反映不可として扱う「全体停止方式」を踏襲し、`--allow-high-risk`のような
+  バイパスは提供しない。バックアップ（`editable/backups/..._before_content_brushup.json`）＋
+  原子的書き込み（一時ファイル→`os.replace()`）も同パターンを踏襲
+- [x] **冪等性の設計判断（重要）**: `lesson_pages.json`全体のハッシュとスナップショットの単純
+  比較では、`--apply`成功後に本文が意図的に変わるため2回目以降のdry-run/applyが恒久的に
+  失敗してしまうことが実装時に判明した。対象ページごとに「現在値が原文と一致する（未反映）」か
+  「現在値が改善案と一致する（反映済み＝冪等）」かを個別に確認し、どちらでもない場合だけ
+  他の変更との競合として拒否する方式に設計変更して解決した
+- [x] `src/image_brushup_design.py`: `lesson_pages_sha256()`・`check_manifest_freshness()`を
+  追加。`render_ai_image_brushup_instructions()`に現在の`lesson_pages.json`のSHA-256を埋め込み、
+  AIエージェントが作成する`design_manifest.json`へ`source_lesson_pages_sha256`として記録させる
+  よう指示書を更新
+- [x] `src/brushup_renderer.py`: `load_design_pages()`に鮮度チェックを追加。
+  `design_manifest.json`の`source_lesson_pages_sha256`が現在の`lesson_pages.json`のハッシュと
+  一致しない場合（または記録されていない古いmanifestの場合）、`render-brushup`を拒否し
+  `prepare-image-brushup`の再実行を促すメッセージを表示する
+- [x] `src/cli.py`: `prepare-content-brushup`（`--output-dir`必須、`--force`任意）・
+  `apply-content-brushup`（`--output-dir`必須、`--dry-run`/`--apply`相互排他必須、`--pages`任意）
+  の2サブコマンドを追加。固定書式のバナー（`CONTENT_BRUSHUP_PREPARE:`/
+  `CONTENT_BRUSHUP_APPLY_DRY_RUN:`/`CONTENT_BRUSHUP_APPLY:`）を表示し、`--apply`成功時は
+  次に`prepare-image-brushup`を実行するよう案内する
+
+### テスト追加（Phase 10.13、新規68件）
+
+- [x] `tests/test_content_brushup.py`（29件）: スナップショットのSHA-256記録・既存/新規/古さ
+  判定、`prepare-content-brushup`が`lesson_pages.json`を変更しないこと、指示書への本文非埋め込み・
+  絶対パス非埋め込み・固定ページ数非依存（3/137ページ）・スナップショットハッシュ埋め込み、
+  候補JSON検証（`original`一致・`proposed`空拒否・`before`/`after`実在確認・未知`change_type`
+  拒否・不正`risk_level`拒否・`risk: high`時の`requires_human_review`必須・`page_no`/
+  `source_image`不一致拒否）、集約JSON検証（スナップショットハッシュ不一致・重複・`source`不一致・
+  `risk_counts`不整合の拒否）、差分レンダリングの安全なエスケープ、review.html/review_summary.md
+  生成
+- [x] `tests/test_content_brushup_apply.py`（20件）: `--pages`解析、dry-runの正常系（変更あり/
+  なしページ判定）、`--pages`絞り込み、`risk: high`・`requires_human_review: true`による
+  全体停止方式の拒否、`failed_pages`拒否、`--pages`存在しないページ拒否、apply実行結果
+  （バックアップ作成・派生field再計算・metadata/source情報保持・スナップショット不変）、
+  **冪等性（2回目のdry-run/applyが正しく成功すること。上記の設計変更の直接的な回帰テスト）**、
+  未passed時の例外・無変更確認、反映結果が既存ローダーで読み戻せること、レポート生成
+- [x] `tests/test_cli_content_brushup.py`（12件）: サブコマンド認識、スナップショット生成・
+  コピー可能な1文表示・絶対パス非表示、`--force`無しでの古いスナップショット拒否・`--force`での
+  上書き、`--dry-run`/`--apply`の相互排他・両方省略時のエラー、dry-run非破壊性、apply実行時の
+  バックアップ作成と`prepare-image-brushup`案内、2回目applyの冪等性、`risk: high`による拒否時の
+  非ゼロ終了コードと`lesson_pages.json`不変、`--pages`絞り込み
+- [x] `tests/test_image_brushup_design.py`（+6件）: `lesson_pages_sha256()`が`hashlib`と一致、
+  `check_manifest_freshness()`の一致/不一致/欠落判定、指示書・`write_design_entry_points()`への
+  実際のハッシュ埋め込み
+- [x] `tests/test_cli_image_brushup.py`（+1件）: 本文更新後に古い`design_manifest.json`のまま
+  `render-brushup`を実行すると拒否され、画像が生成されないことのend-to-end確認
+- [x] 既存986件（Phase 10.12完了時点918件+今回68件（新規29+20+12件・既存ファイルへの追加分
+  6+1件）＝986件。`pytest -q`で確認）すべて成功
+
+### 実データ確認（`output/ocr_engine_eval/`本体、11ページ）
+
+`/tmp`配下の専用コピーで一連の導線を検証したうえで、実際に`output/ocr_engine_eval/`
+（既存の評価用ディレクトリ本体）へ適用した。
+
+- `prepare-content-brushup`実行後、`content_brushup/VERIFIED_OCR_SNAPSHOT.json`・
+  `AI_CONTENT_BRUSHUP.md`・`README.md`が生成され、標準出力にコピー可能な1文が表示されることを
+  確認した
+- 実データ11ページすべてについて、AI作業エージェント役として実際に本文を読み、次の判断を行った。
+  - **Page1**: 「・後で改めて見返して、変えてもOK」の重複表現（「改めて」＋「後で」）を整理し
+    「・後で見返して、内容を変えてもOK」へ変更（`remove_redundancy`・`low`）
+  - **Page3**: 1行に2項目が詰め込まれていた箇条書き2箇所を、項目ごとの独立した行へ分割
+    （`hierarchy`・`medium`。内容・順序は変更していない）
+  - **Page6**: 「〜考えたり」「〜というように、逆から考えるのも◎」と続く長い一文を、2つの
+    提案を独立させた2文に分割（`split_sentence`・`medium`）
+  - **Page8**: 文頭の三点リーダー「…など、具体性があるとより良いです」を「など、具体的に
+    書けるとより良いです」という完結した文に整理（`clarify`・`low`）
+  - **Page2/4/5/7/9/10/11（7ページ）**: 既に明確な文章と判断し、変更なし
+    （`proposed`は`original`と同一、`risk_level: low`、`changes: []`）
+  - `risk_counts`は`low: 9 / medium: 2 / high: 0`
+- **高リスク候補の拒否確認**: `/tmp`配下の専用コピーで1ページの`risk_level`を`high`・
+  `requires_human_review`を`true`に書き換えて`--apply`を実行したところ、
+  `CONTENT_BRUSHUP_APPLY: failed`・終了コード非ゼロとなり、`lesson_pages.json`はバイト単位で
+  無変更（MD5ハッシュ一致）だった
+- `--dry-run`実行結果: `CONTENT_BRUSHUP_APPLY_DRY_RUN: passed`、変更予定ページ`1, 3, 6, 8`、
+  変更なしページ`2, 4, 5, 7, 9, 10, 11`、反映不可ページなし
+- `--apply`実行結果: 11ページ全て反映（4ページ変更・7ページ変更なし）、
+  `editable/backups/`に1件バックアップ作成
+- `VERIFIED_OCR_SNAPSHOT.json`が`--apply`前後で完全に不変であることを確認した
+- `lesson_pages.json`のPage1の`image_text`/`canva_prompt`に「内容を変えても」が反映される等、
+  派生fieldが新しい本文と正しく整合していることを確認した
+- **冪等性**: 直後に再度`--dry-run`を実行すると全ページ「変更なし」となり、全体判定も
+  `passed`（前述の設計変更により、スナップショットハッシュとの単純比較では失敗していたはずの
+  ケースが正しく成功することを実データでも確認）
+- **古いデザインの拒否確認**: 本文更新後、Phase 10.12時点の`design_manifest.json`
+  （`source_lesson_pages_sha256`未記録）のまま`render-brushup`を実行するとエラーで拒否され、
+  `prepare-image-brushup`の再実行を促すメッセージが表示されることを確認した
+- `prepare-image-brushup`→（本文の行数変化に合わせてPage3・Page6のデザインJSONの行範囲を
+  再計算）→`render-brushup`を実行し、11ページ全て成功。Page3の分割済み箇条書き・Page6の
+  2文構成が、いずれも生成画像へ正しく反映されていることを目視で確認した
+- 最終画像がブラッシュアップ済み本文（OCR確定原文ではない）を使用していることを、生成画像の
+  文言とスナップショットの文言を比較して確認した
+
+### 今回実装しなかったもの・制限事項
+
+- `preserved_facts`（保持すべき重要情報の申告）が実際に改善後の本文へ含まれているかを機械的に
+  検証する仕組みは無い（人間がreview.htmlで確認する前提）
+- `changes`に記録されなかった箇所の変更（AIエージェントの記録漏れ）を検出する仕組みは無い
+- 本文の質的な良し悪し（読みやすくなったかどうか）を自動評価する仕組みは無く、`risk_level`は
+  AIエージェントの自己申告に依存する
+- ページ構成（統合・分割・順序変更）のブラッシュアップは意図的にスコープ外（既存`restructure`
+  モードまたは別工程の役割）
+- 実データ確認は11ページだったが、指示書生成・検証ロジック自体は固定ページ数に依存しない設計・
+  テスト（3ページ・137ページでの検証）で確認している
+
+## Phase 10.14: 統一スライドマスターとCodex向け最終画像生成パッケージ
+
+### 目的
+
+```text
+OCR確定原文 → 本文ブラッシュアップ → 構成・デザイン設計
+→ Codexによる最終ビジュアル生成 → 確定済み日本語本文の決定論的合成 → 完成画像
+```
+
+Phase 10.12のプレビューはページごとに白いカードの寸法・位置が変わり、デッキ全体としての
+統一感が無かった。本Phaseは、全ページ完全に共通のスライドマスター（`MASTER_LAYOUT.json`）を
+定義し、Codex（次工程・Phase 10.15）が最終ビジュアルを生成するための自己完結パッケージを
+作成する。**本Phase自体は完成画像（`rendered_final/`）を生成しない。**
+
+詳細は[`19_final_image_package_workflow.md`](19_final_image_package_workflow.md)を参照。
+
+### 実装内容
+
+- [x] `src/final_image_package.py`（新規）: パス解決（`FinalImagePackagePaths`）、キャンバス
+  正規化（`analyze_canvas_size`。元画像のアスペクト比を集計し16:9/4:3/1:1/3:4/9:16の標準比率へ
+  正規化）、`MASTER_LAYOUT.json`組み立て（`build_master_layout`。1600x900基準テンプレートを
+  実キャンバスサイズへ比例スケーリング）、鮮度検証（`check_master_layout_freshness`。
+  Phase 10.12/10.13の`lesson_pages_sha256`/`check_manifest_freshness`と同じ仕組み）、本文構造
+  分析（`analyze_page_text`。タイトル重複行の除外、`※`注記行の分離、`◎`強調行検出、
+  「例1）」「例2）」2段組み検出）、ページ別内部レイアウト仕様生成（`build_page_spec`。
+  `line_range`による段落参照のみで本文を複製しない）、2段組み列幅の自動提案
+  （`_suggest_column_ratio`。両列の最長行を実測）、検証（`validate_page_spec`/
+  `validate_master_layout`/`validate_text_snapshot`。マスター座標の上書き禁止・本文複製禁止・
+  `emphasis.match`実在確認・ハッシュ整合確認）、Codex向け自己完結指示書生成
+  （`render_codex_final_image_generation_instructions`）、背景生成プロンプト生成
+  （`render_master_background_prompt`/`render_page_background_prompt`。「文字を一切生成しない」
+  「固定領域に装飾を置かない」を明記）、`asset_manifest.json`/`package_manifest.json`組み立て
+- [x] `src/final_image_renderer.py`（新規）: `brushup_renderer.py`の低レベル部品
+  （`_fit_text_block`/`_draw_paragraph_block`/`_measure_columns`等）を再利用したカード内部の
+  測定・描画（`_measure_card_blocks`/`_draw_card_blocks`。固定サイズの本文カード内で
+  余白→行間→フォントサイズ→2段組みの順に縮小し、それでも収まらない場合は本文を切り詰めず
+  ページ生成を失敗させる）、縦方向配置（`top`/`center`/`distributed`）、固定領域描画
+  （タイトル・注記・ページ番号）、カード背景（角丸・罫線・簡易影）描画、マスターガイド画像生成
+  （`render_master_guides`。キャンバス・4固定領域・カード内側パディングを座標付きで可視化）、
+  比較確認HTML生成（`render_comparison_html`。自己完結・外部リンクなし）、一括実行本体
+  （`write_final_image_package`。Phase 10.12の`brushup_renderer.load_design_pages()`を
+  そのまま再利用して`brushup_design`の鮮度・完全性を検証してから処理を進める）
+- [x] `src/cli.py`: `prepare-final-image-package`サブコマンド追加（`--output-dir`必須、
+  `--font-path`任意）。標準出力に固定書式の判定バナー・共通キャンバス/カード情報・
+  Codex向けの固定1文を表示
+
+### 設計判断
+
+- **カード内部レイアウトの自動決定**: Phase 10.12はAI作業エージェント（Claude Code/Codex）が
+  ページごとにデザインJSONを設計する2段階フローだったが、本Phaseは
+  `prepare-final-image-package`自身が本文構造（`◎`・「例N）」等の記号パターン）を機械的に
+  分析してカード内部レイアウトを決定する1コマンド完結フローにした。理由: 本Phaseの主眼は
+  「全ページ共通の固定マスター」の実現であり、カード内部の構成判断自体は既存の
+  `line_range`/`group`/`column_ratio`（Phase 10.12）の枠組みで十分表現でき、実データ11ページで
+  実際に正しく機能することを確認した（Page3の「例1）/例2）」2段組み検出、Page2/6/7/9の
+  `◎`強調検出）。AIエージェントによるページ別の意匠判断を残すかどうかはCodexへの判断依頼事項
+  とした（本節末尾参照）
+- **`brushup_design`を「使うが再解析しない」**: 仕様は`brushup_design/design_manifest.json`を
+  入力として明記しているが、Phase 10.12のブロック構成をそのまま転用するのではなく、
+  「Phase 10.12の画像デザインが現在の本文と整合していることの前提確認」としてのみ再利用した
+  （`brushup_renderer.load_design_pages()`をそのまま呼び出し、エラーがあれば
+  `prepare-image-brushup`/`render-brushup`の再実行を促して停止する）。カード内部レイアウトは
+  本Phase独自のロジックで新規に決定する
+- **強調は段落単位**: 1行内の一部の文字だけをハイライトする表現は実装せず、`◎`を含む段落
+  全体を独立ブロックとして大きく太字・アクセント色にする方式にした。既存の`line_range`機構を
+  そのまま使えるため実装・検証コストが低く、実データでも視覚的に十分な強調効果を確認した
+- **キャンバス正規化は標準比率の多数決＋固定テンプレートの比例スケーリング**: 1600x900を
+  基準テンプレートとし、実際のキャンバスサイズに応じて`regions`の座標を比例スケーリングする
+  方式にした。実データは全ページ16:9で統一されているためそのまま1600x900になるが、
+  4:3/1:1等の他デッキでも同じロジックが機械的に動作することをテストで確認済み
+
+### テスト
+
+- [x] `tests/test_final_image_package.py`（新規29件）: キャンバス正規化（16:9→1600x900、
+  4:3→1600x1200、元画像なし時のフォールバック）、`MASTER_LAYOUT.json`組み立て（内容量に
+  関わらず同一の`content_card`座標・非基準キャンバスでのスケーリング）、鮮度検証、本文構造分析
+  （タイトル重複行除外・`◎`検出・「例1）/例2）」2段組み検出とその分割位置・単一マーカー時は
+  2段組みにしないこと）、`split_body_and_notice`、ページ仕様生成（強調ブロック分離・2段組み
+  ブロック生成・`emphasis.match`が実在する部分文字列であること）、検証関数（正常ケース・
+  `page_no`不一致・ハッシュ不一致・`emphasis.match`不在・マスター座標上書き試行・本文複製
+  試行の拒否）、`asset_manifest`/`package_manifest`組み立て
+- [x] `tests/test_final_image_renderer.py`（新規12件）: 単一ページのプレビュー生成成功、
+  極端に長い本文でのオーバーフロー時の切り詰めなし失敗、内容量（少/多）に関わらずキャンバス・
+  カードサイズが同一であることの確認、`write_final_image_package`の一括実行（全ファイル生成・
+  `rendered_final/`を作らないこと・元画像/`lesson_pages.json`を変更しないこと・全ページで
+  `content_card`座標が同一であること・任意ページ数対応・`brushup_design`欠落時/古い
+  `lesson_pages`ハッシュ時の拒否）、マスターガイド画像のキャンバスサイズ一致、比較HTMLの
+  自己完結性（外部URL不使用）
+- [x] `tests/test_cli_final_image_package.py`（新規4件）: パッケージ一式の生成・固定文言の
+  標準出力・`--output-dir`必須・`brushup_design`未整備時のクリーンな失敗・共通キャンバス/カード
+  情報の表示
+- [x] 既存1031件（Phase 10.13完了時点986件+今回45件）すべて成功（`pytest -q`で確認）
+
+### 実データ確認（`output/ocr_engine_eval/`本体、11ページ）
+
+`/tmp`配下の専用コピーで検証したうえで、実際に`output/ocr_engine_eval/`へ適用した。
+
+- 元画像は全11ページとも1706x960（16:9）であることを確認し、`prepare-final-image-package`が
+  キャンバスを`1600x900`に正規化することを確認した
+- 全11ページの`MASTER_LAYOUT.json`の`content_card`（x=56, y=200, width=1488, height=590）・
+  `notice_region`・`page_number_region`が完全に同一であることを、生成された全ページ別仕様JSONと
+  突き合わせて確認した
+- **Page3**（「例1）キャラクターT」「例2）キャラクターB」を含む）が自動的に`two_column`と
+  判定され、`split_at`・実測に基づく`column_ratio`（0.6）で、Phase 10.12の実データレビューで
+  人間が手動調整したのと同様の破綻のない2段組みが生成されることを目視で確認した
+- **Page6**（短めの内容、9段落）が`distributed`配置となり、カード外形は他ページと同一のまま
+  内部で自然に余白が分散配置されることを目視で確認した。**Page1**（6段落）は`center`配置で
+  カード内に不自然に上詰めされないことを確認した
+- Page2/6/7/9の`◎`を含む行（「参考にするのも◎」「考えるのも◎です」「差別化になります◎」）が、
+  独立した太字・アクセント色ブロックとして強調表示されることを確認した
+- 全11ページが成功（オーバーフロー・失敗なし）、`rendered_final/`が生成されていないこと、
+  既存の`rendered_brushup/`・`rendered/`・`editable/lesson_pages.json`・元画像が一切変更
+  されていないことを確認した
+- テキストスナップショット（`text/page_003.json`・`text/page_006.json`）が、Phase 10.13で
+  ブラッシュアップ済みの本文（Page3の箇条書き分割・Page6の2文分割）を使用していることを
+  確認した（OCR確定原文の生の値ではない）
+- 標準出力に、共通キャンバス・共通本文カード座標・Codex向けの固定1文
+  （`output/ocr_engine_eval/final_image_package/CODEX_FINAL_IMAGE_GENERATION.mdを読み、
+  記載された手順を最後まで実行してください。`）が表示されることを確認した
+
+### 今回実装しなかったもの・制限事項
+
+- カード内部レイアウト（1段組み/2段組み・強調箇所）の判定は記号パターンに基づく機械的な
+  ルールベースであり、Phase 10.12のようなAI作業エージェントによるページ別の意匠判断は
+  行っていない
+- 強調は段落単位の一括スタイル変更であり、1行内の一部文字だけのハイライトは未対応
+- Codexによる実際の背景生成・完成画像の合成（Phase 10.15）は未実装。本Phaseは入力パッケージと
+  プレビューの生成までがスコープ
+- `card`の影表現は単純な単色オフセット矩形によるプレビュー用の簡易実装であり、最終品質の
+  影表現ではない（`preview/`はレイアウト確認用であることを明記済み）
+
+### Codexに判断してほしい点
+
+1. カード内部レイアウト・強調箇所の決定を、本Phaseのような機械的ルールベースのままとするか、
+   Phase 10.12と同様にAI作業エージェントによるページ別の意匠判断を追加する工程を挟むか
+2. 2段組みの列幅比率（`column_ratio`）の実測ベース自動提案の精度で十分か、Phase 10.12のように
+   人間が実データを見て個別調整する工程を残すべきか
+3. Phase 10.15（Codexによる最終ビジュアル生成）の実施順序・粒度（背景をデッキ共通1枚にするか
+   ページごとに変えるか等）
+
+## Phase 10.15: Codex生成背景 + 確定済み本文の決定論的合成による完成教材画像
+
+### 目的
+
+```text
+OCR確定原文 → 本文ブラッシュアップ → 構成・デザイン設計
+→ Codexによる最終ビジュアル生成 → 確定済み日本語本文の決定論的合成 → 完成画像
+```
+
+Codexが生成した文字なし共通背景（`rendered_final/background_master.png`）と、Phase 10.14が
+確定した固定スライドマスター（`MASTER_LAYOUT.json`）・ページ別内部レイアウト仕様
+（`final_image_package/pages/page_NNN.json`）・確定済み本文スナップショット
+（`final_image_package/text/page_NNN.json`）から、完成画像（`rendered_final/page_NNN.png`）を
+決定論的に合成する。詳細は[`20_final_image_render_workflow.md`](20_final_image_render_workflow.md)を参照。
+
+### 実装内容
+
+- [x] `src/final_slide_compositor.py`（新規）: パス解決（`resolve_paths`）、背景画像検証
+  （`validate_background_image`。存在・`MASTER_LAYOUT.json`の`canvas`とのサイズ一致・破損検出・
+  透明度検出）、入力一式の読み込み・検証（`load_and_validate`。Phase 10.14の
+  `validate_master_layout`/`check_master_layout_freshness`/`validate_page_spec`/
+  `validate_text_snapshot`を再利用しつつ、ページ欠落・重複・余剰ファイル検出
+  （`_validate_package_completeness`）、`content_layout.blocks[].line_range`が本文スナップショット
+  の段落数に収まっていることの確認（`_validate_line_ranges_against_snapshot`）、ページ仕様と
+  本文スナップショットの注記有無一致確認（`_validate_notice_consistency`）、日本語フォント解決を
+  追加）、本文スナップショット専用の軽量ページオブジェクト（`_SnapshotPage`）による
+  Phase 10.14の測定・描画部品（`final_image_renderer._measure_card_blocks`等）の再利用、
+  1ページ合成（`composite_page`。共通背景の複製へ固定領域を描画する。カード内部描画は本Phase
+  独自の`_draw_card_blocks`で、強調ブロックへ左アクセントバーを追加）、一括実行本体
+  （`write_final_images`）、レポート・比較HTML生成
+  （`render_final_render_report_json`/`render_final_render_report_markdown`/
+  `render_final_comparison_html`）
+- [x] `src/cli.py`: `render-final-images`サブコマンド追加（`--output-dir`必須、`--background`/
+  `--font-path`任意）。標準出力に固定書式の判定バナー・背景/完成画像/比較画面/レポートの
+  パスを表示
+
+### 設計判断
+
+- **文字の取得元をtext snapshotに限定**: 画像へ描画する文字列は`text/page_NNN.json`の
+  `title`/`body`/`notice`フィールドのみから取得し（軽量な`_SnapshotPage`をPhase 10.14の描画
+  部品へ渡すことで実現）、`lesson_pages.json`（`LessonPage`）は入力検証（鮮度確認）にのみ使う。
+  これにより「本文はtext/page_NNN.jsonから取得する」という要件を、Phase 10.14の描画ロジックを
+  複製せずに満たした
+- **`notice`フィールドが空文字列になる既知の癖への対応**: 実データ検証で、Phase 10.14の
+  `final_image_package.split_body_and_notice()`が生の行（`"speaker: text"`形式）の先頭文字だけで
+  注記を判定するため、話者が空文字列の行（`": ※無断転載禁止（おとスタ）"`のように保存される）を
+  検出できず、`text/page_NNN.json`の`notice`フィールドが実データ全11ページで空文字列になっている
+  ことが判明した。`prepare-final-image-package`（Phase 10.14・既存機能）自体は変更せず、本Phaseの
+  レンダラー側で`body`を解析し直して注記を検出する`_derive_notice_text()`を実装することで対応した
+  （詳細は[`20_final_image_render_workflow.md`](20_final_image_render_workflow.md)「5節」、
+  本節末尾のCodexへの判断依頼事項も参照）
+- **強調は左アクセントバーを追加するのみ**: Phase 10.14が既に太字・アクセント色で表現している
+  強調ブロック（`style.color`がテーマの`accent`と一致するブロック）に対し、テキストの折り返し幅・
+  開始位置を変えずに左アクセントバーだけを追加した。ブロックの測定結果（`fit`）を再利用したまま
+  装飾だけを足せるため、Phase 10.14の折り返し計算とずれるリスクが無い
+- **背景はデッキ共通1枚のみ対応**: Codexが生成したページ別背景差分（`prompts/page_NNN.md`が
+  想定する運用）は本Phaseでは扱わず、`--background`で1枚の背景を明示的に差し替えられる機能のみ
+  実装した。理由: 実データでは共通背景1枚（`background_master.png`）のみが生成されており、
+  ページ別背景の運用を今回のスコープに含めると検証項目が大きく増えるため、まず単純な構成で
+  実データを完成させることを優先した
+
+### テスト
+
+- [x] `tests/test_final_slide_compositor.py`（新規23件）: 正常系一括実行（全ページ生成・冪等な
+  再実行・保護対象ファイル無改変・全ページ同一カード外形・2段組み判定・丸数字/波ダッシュ描画）、
+  拒否系（背景不在・背景サイズ不一致・背景透明度・master不在・package manifest不在・stale
+  lesson_pages・ページ仕様欠落・余剰ページ仕様・text snapshot不一致・フォント未検出）、
+  オーバーフロー時の切り詰めなし失敗、`_derive_notice_text`の3パターン（明示的notice優先・
+  空話者行からの復元・注記無し）、レポートJSON/比較HTMLの内容確認
+- [x] `tests/test_cli_render_final_images.py`（新規6件）: `--output-dir`必須、パッケージ一式の
+  生成・固定文言の標準出力、`--background`上書き、`prepare-final-image-package`未実行時/背景
+  未整備時のクリーンな失敗、既存`rendered_brushup_preview/`への非影響
+- [x] 既存1060件（Phase 10.14完了時点1031件+今回29件）すべて成功（`pytest -q`で確認。無関係な
+  `tests/test_verification_evidence.py::test_generate_run_id_is_unique_across_calls`が実行ID末尾
+  4桁のランダム衝突で稀に失敗することがあるが（20回抽選時の理論衝突率約2%）、本Phaseの変更とは
+  無関係で単体では確実に成功することを確認済み。既存の既知の不安定挙動であり本Phaseで修正しない）
+
+### 実データ確認（`output/ocr_engine_eval/`本体、11ページ）
+
+- Codexが生成済みの`rendered_final/background_master.png`（1600x900・文字なし）を使い、
+  `render-final-images --output-dir output/ocr_engine_eval`を実行し、11ページ全ての完成画像
+  （`rendered_final/page_001.png`〜`page_011.png`）が生成されたことを確認した
+- 全11ページを実際に目視確認した
+  - **Page3**: 「例1）キャラクターT」「例2）キャラクターB」の2段組みが崩れず、左右列の開始位置が
+    揃っていることを確認した
+  - **Page6**: 白いカードが他ページと同一の幅・高さで、9段落の内容が`distributed`配置で
+    上部へ偏りすぎず視覚的に均衡していること、「逆に「こうはなりたくない」〜」の強調行が
+    左アクセントバー＋太字・アクセント色で強調されていることを確認した
+  - **Page1**: 本文量が少ない（6段落・`center`配置）ページでもカード外形が他ページと同一である
+    ことを確認した
+  - **Page11**: 「⑩」が正しく描画されることを確認した
+  - 全ページで、共通背景の装飾（外周のテクスチャ・色ムラ）が本文カード内の文字と競合せず、
+    注記・ページ番号が全ページ同一位置で読める濃さで描画されていることを確認した
+- 全11ページで`text_match: true`・`overflow: false`・`truncated: false`（`final_render_report.json`）
+  であることを確認した
+- 背景原本（`background_master.png`）・元画像（`assets/`）・`editable/lesson_pages.json`・
+  既存の`rendered/`・`rendered_brushup/`・`rendered_brushup_preview/`・Phase 10.14の
+  `final_image_package/`既存ファイル（`MASTER_LAYOUT.json`・`pages/`・`text/`）が一切変更されて
+  いないことを、実行前後のバイト列比較で確認した
+- `render-final-images`を2回連続実行し、2回とも11ページ全て成功することを確認した（冪等性）
+- `final_image_package/final_comparison.html`に外部URL（`http://`/`https://`）が含まれないこと、
+  元画像・Phase 10.14プレビュー・Phase 10.15完成画像の3枚がページごとに並ぶことを確認した
+
+### 今回実装しなかったもの・制限事項
+
+- カード内部レイアウト・強調箇所の判定はPhase 10.14が確定したものをそのまま使い、本Phase独自の
+  再判定は行っていない
+- 強調表示は左アクセントバー＋太字・アクセント色の固定的な表現であり、1行内の一部の文字だけの
+  ハイライトは未対応
+- ページ別背景差分（`prompts/page_NNN.md`が想定する運用）には未対応。共通背景1枚のみ
+- `text/page_NNN.json`の`notice`フィールドが空文字列になる既知の癖（`split_body_and_notice()`の
+  判定ロジック）自体は本Phaseでは修正していない（本Phaseのレンダラー側で吸収するに留めた）
+
+### Codexに判断してほしい点（本節はPhase 10.15追加修正で更新。下記参照）
+
+1. ~~`final_image_package.split_body_and_notice()`が空話者行の注記を検出できない問題~~ →
+   Phase 10.15追加修正で正式に修正済み（下記「Phase 10.15 追加修正」参照）
+2. 強調表示（左アクセントバー＋太字・アクセント色）の見た目で十分か、Phase 10.12のような人間の
+   目視調整・追加の装飾（淡い背景等）を加える工程を挟むべきか
+3. ページ別背景差分（`prompts/page_NNN.md`）を使う運用を今後サポートするか、共通背景1枚のみの
+   運用で確定するか
+
+## Phase 10.15 追加修正: 描画不具合の調査・視覚描画検証の分離・notice正式修正・sparse page改善
+
+### 背景
+
+Phase 10.15完了報告後、「Page3・Page11でタイトルが欠落し黒い矩形が発生している」「Page1・Page11の
+本文がカード左側へ偏っている」という指摘を受けた。**タイトル欠落・黒い矩形については、指摘された
+`output/ocr_engine_eval/rendered_final/page_003.png`・`page_011.png`を実際にピクセルレベルで
+実測したところ再現しなかった**（下記「調査結果」参照）。一方、本文カード内の水平/垂直利用率が
+低いページが存在するという指摘・`text_match`が文字列比較にすぎず実際の描画結果を検証していない
+という指摘は妥当であったため、これらは実際に修正した。
+
+### 調査結果（黒い矩形・タイトル欠落の再現確認）
+
+- `output/ocr_engine_eval/rendered_final/page_003.png`・`page_011.png`（および他9ページ）の
+  `title_region`/`content_card`/`notice_region`/`page_number_region`の4領域について、RGB各値が
+  すべて40未満の「暗色ピクセル」の比率を実測したところ、**全11ページ・全4領域で0.0（0件）**
+  だった（黒い矩形は存在しない）
+- 同じ4領域について、`theme.primary_text`（タイトル色）に近い色のピクセル数を実測したところ、
+  Page3で8,416px、Page11で8,416px、Page1で4,598px検出され、**タイトル文字は実際に描画されている**
+  ことを確認した
+- 目視でも、Read画像ツールで11ページ全てを確認し、タイトル欠落・黒矩形のいずれも確認できなかった
+- 実装コード（`src/final_slide_compositor.py`・`src/final_image_renderer.py`）を確認したところ、
+  RGBAレイヤーを作成して`paste()`する処理は一切存在せず（すべて`ImageDraw.Draw`による直接描画）、
+  「透明レイヤーの暗黙の黒背景」「maskなしpaste」に起因する不具合が発生しうる構造になっていない
+  ことも確認した
+- 以上より、**「黒い矩形」「タイトル欠落」という具体的な症状は、当時生成されていたファイルには
+  再現しなかった**。原因は不明（別環境での表示・別ファイルの参照・見え方の相違等の可能性がある）。
+  ただし、この調査を機に「文字列としての一致(`text_match`)」と「実際に画像へ描画されたか」を
+  分離すべきという指摘自体は妥当と判断し、以下の恒久対策を実装した
+
+### 実装内容（視覚描画検証の分離）
+
+- [x] `source_text_match`へ改称: 旧`text_match`は「描画処理へ渡した文字列がtext snapshotと
+  一致するか」という文字列比較の意味しか持たないことを名前で明確にした
+- [x] 合成後の完成画像を実測する`*_visually_rendered`一式を新規追加（`compute_visual_report`）
+  - `_verify_ink_region`: regionを含む周辺（マージン込み）を`ImageChops`ベースの色マスクで実測し、
+    対象色に近いピクセルのbbox・件数・regionをはみ出しているか（overflow）を検出
+  - `_dark_region_ratio`: 安全領域（title_region/content_card/notice_region/page_number_region）
+    内の暗色（RGB全チャンネル40未満）ピクセル比率を検出。文字色（primary_text等）はいずれか1
+    チャンネルが40以上のため、文字マスクを別途除外しなくても誤検出しない設計
+  - `_verify_title_region`/`_verify_body_region`/`_verify_notice_region`/`_verify_page_number_region`:
+    上記を使い、`title_bbox`/`title_region`/`title_font_size`/`title_line_count`/
+    `title_mask_nonempty`/`title_bbox_within_region`/`title_pixels_present`/
+    `title_dark_artifact_detected`/`title_visually_rendered`、`body_bbox`/`content_inner_region`/
+    `horizontal_utilization`/`vertical_utilization`/`body_visually_rendered`等をレポートへ記録
+  - 成功条件を`source_text_match == true` かつ `overflow == false` かつ `truncated == false`
+    かつ `all_regions_visually_rendered == true`に変更（`write_final_images`）。いずれか1つでも
+    falseならページ全体を失敗扱いにする
+- [x] 補助OCR確認（`_ocr_title_check`）: 既存OCR機能（`src/ocr_engine.py`・
+  `src/ocr_environment.check_tesseract_environment`）でタイトル領域を再認識し、一致率を記録する。
+  bbox/pixel検証を主判定とし、OCR結果は警告のみ（tesseract未導入環境でも安全にスキップする）
+- [x] `final_render_report.json`（schema_version 2）・`final_render_report.md`・
+  `final_comparison.html`へ、上記の全項目（bbox・利用率・暗色矩形検査結果・補助OCR結果・notice
+  source等）を記録するよう更新
+
+### 実装内容（本文カード内部の視覚的均衡・sparse page改善）
+
+- [x] `_measure_card_blocks_with_growth`: `single_column`かつカード内の垂直方向利用率が既定で
+  低い（60%未満）ページに限り、文字サイズを1.12倍→1.25倍→1.4倍と段階的に拡大しながら再測定し、
+  最後に収まったスケールを採用する（本文カードの外寸・2段組みページ・既に十分埋まっているページは
+  一切変更しない）
+- [x] レポートへ`horizontal_utilization`/`vertical_utilization`/`body_bbox`/`content_inner_region`
+  を記録し、低利用率（35%未満）の場合は警告として記録する（`body_low_utilization_warning`）
+
+### 実装内容（notice抽出の正式修正、Phase 10.14）
+
+- [x] `src/final_image_package.py`の`split_body_and_notice()`を修正: 従来は生の行
+  （`"speaker: text"`形式）の先頭文字だけで注記判定していたため、話者が空文字列の行
+  （`": ※無断転載禁止（おとスタ）"`のように保存される）を検出できず、実データ全11ページで
+  `text/page_NNN.json`の`notice`フィールドが常に空文字列になっていた。`lesson_pages.parse_body_lines`
+  と同じ話者・本文の分解ロジックを最終行にも適用し、分解後の本文部分が`※`で始まるかどうかで
+  判定するよう修正した（`analyze_page_text`が使う`_paragraph_lines_for_field`と一貫した判定になる）
+- [x] `prepare-final-image-package`を実データに対して再実行し、`final_image_package/text/page_NNN.json`
+  の`notice`フィールドが正しく埋まることを確認した（`MASTER_LAYOUT.json`・`pages/`も再生成されたが、
+  内容は座標・レイアウト種別ともに変化なし。`source_lesson_pages_sha256`のみ再生成時刻に伴い
+  タイムスタンプが更新される）
+- [x] `src/final_slide_compositor.py`の`_derive_notice_text()`は防御的フォールバックとして維持
+  （`notice`フィールドが正しく埋まっている場合はそちらを優先し、`body`解析へは通常フォールバックしない）
+
+### テスト（Phase 10.15追加修正、新規33件）
+
+- [x] `tests/test_final_image_package.py`: `split_body_and_notice`が空話者行の注記を正しく検出する
+  回帰テストを追加（新規1件）
+- [x] `tests/test_final_slide_compositor_visual.py`（新規）: タイトルbbox/mask/黒矩形検出（欠落検出・
+  正常描画検出・黒矩形検出・primary_text色を誤検出しないこと・region外はみ出し検出）、
+  `_draw_title`の座標・折り返し（負座標なし・1行/2行・最小フォント縮小・切り詰めなし失敗）、
+  sparse page文字サイズ拡大（single_columnのみ拡大・two_columnは不変・カード外寸不変）、
+  完成判定の分離（`source_text_match`のみでは成功にならないこと・title/body/notice/page_number
+  いずれかの視覚描画検証失敗で失敗になること・全て真の場合のみ成功）、レポートへのbbox/利用率/
+  暗色矩形/補助OCR記録確認、notice正式修正の回帰確認、実データ相当の回帰（Page3型2段組み・Page11型
+  sparse single column・Page1/3/11形状の3ページデッキ全成功）、補助OCR確認の単体・統合テスト
+  （計32件）
+- [x] 既存テスト（`tests/test_final_slide_compositor.py`・`tests/test_cli_render_final_images.py`）
+  の`text_match`参照を`source_text_match`・新規視覚検証フィールドへ更新
+- [x] 既存1060件+今回33件（`test_final_image_package.py`+1件、`test_final_slide_compositor_visual.py`
+  +32件）すべて成功（`pytest -q`で確認）
+
+### 実データ再確認（`output/ocr_engine_eval/`本体、11ページ）
+
+- `prepare-final-image-package`（notice修正反映）→`render-final-images`の順に再実行し、11ページ
+  全ての完成画像を再生成した
+- 全11ページを実際に目視で再確認した（Page1〜11すべて）。タイトル欠落・黒矩形は元々発生していな
+  かったことと一致して、再生成後も発生していないことを確認した
+- **Page1**: 水平利用率0.591・垂直利用率0.529（拡大前は目視で左上に偏っていた文字が、拡大後は
+  カード内でバランス良く配置されていることを確認）
+- **Page11**: 水平利用率0.683・垂直利用率0.640（「⑩」を保持したまま、文字サイズが拡大され
+  読みやすくなっていることを確認）
+- **Page3**: タイトル完全表示・黒矩形なし・2段組み左右開始位置一致・水平利用率0.902・垂直利用率
+  0.864を確認
+- **Page6**: タイトル完全表示・黒矩形なし・「逆に『こうはなりたくない』〜」の強調・水平利用率
+  0.964・垂直利用率0.628を確認（`distributed`配置は利用率がgrowthの閾値(0.6)以上のため拡大されず、
+  Phase 10.15完了時点のレイアウトを維持）
+- 全11ページで`final_render_report.json`の`all_regions_visually_rendered: true`・
+  `title_dark_artifact_detected: false`・`body_dark_artifact_detected: false`・
+  補助OCR一致率1.0を確認した
+- `final_comparison.html`にtitle bbox/region・水平/垂直利用率・暗色矩形検査結果・補助OCR結果・
+  notice sourceが表示されること、外部URLが含まれないことを確認した
+
+### 今回実装しなかったもの・制限事項（追加修正分）
+
+- 黒い矩形・タイトル欠落は実測で再現しなかったため、根本原因は特定できていない（発生した具体的な
+  環境・手順の追加情報が無いと、これ以上の原因特定は困難）
+- dark artifact検出は「安全領域内の暗色ピクセル比率」という単純な閾値判定であり、指摘にあった
+  「矩形状の連続領域の検出」のような連結成分解析は行っていない（numpyを新規依存に追加せず、
+  既存のPillow標準機能のみで実装する方針を優先したため）
+- sparse page文字サイズ拡大は`single_column`のみに適用し、`two_column`・既に利用率が高いページは
+  対象外（Page6は`distributed`配置で利用率0.628のため今回は拡大対象外のまま）
+
+### Codexに判断してほしい点（追加）
+
+1. 「黒い矩形」「タイトル欠落」の指摘について、実測では再現しなかった旨を確認したうえで、
+   発生した具体的な環境（OS・画像ビューア等）や、指摘の元になった画像ファイルそのものの追加情報
+   があれば共有してほしい。追加情報が無ければ、本Phaseで追加した視覚描画検証（bbox/pixel/暗色矩形
+   検出）を今後の恒久的な安全網として運用する方針でよいか
+2. dark artifact検出を、より厳密な連結成分解析（numpy等の追加依存が必要になる可能性がある）へ
+   発展させるべきか、現状の閾値ベースの簡易実装で十分か
+3. sparse page文字サイズ拡大の対象を`two_column`・`distributed`配置にも広げるべきか
+
+## Phase 10.15 追加修正2: final_comparison.htmlの画像参照パス修正
+
+### 背景
+
+Phase 10.15完成画像は正しく生成されていたが、`final_image_package/final_comparison.html`が
+元画像・Phase 10.14プレビュー・Phase 10.15完成画像のいずれも表示できないという指摘を受けた。
+
+### 根本原因
+
+`render_final_comparison_html()`が、Phase 10.14の`final_image_renderer.render_comparison_html()`
+（`final_image_package/preview/comparison.html`に保存される。`preview/`からの相対パスのため
+`../../assets/...`が正しい）の相対パス文字列をそのまま踏襲してしまい、`final_comparison.html`
+自体は`final_image_package/`直下（`preview/`のような子ディレクトリではない）に保存されるにも
+かかわらず、`../../assets/...`という2階層上のパスを使っていた。正しくは`../assets/...`（1階層上）
+であり、`../../`は`output/`（`ocr_engine_eval`のさらに1つ上）を指してしまっていた。
+
+実データでは偶然`output/assets/`という同名・同内容のディレクトリが別件で存在していたため、元画像
+だけは誤ったパスでも「たまたま」表示されてしまっていたが、`rendered_final/`側には対応する
+`output/rendered_final/`が存在しなかったため、完成画像は確実に表示できなかった。
+
+### 修正内容
+
+- [x] `relative_asset_path(html_path, target_path, *, allowed_root)`（新規）: HTMLの実際の
+  保存先から画像の実際の保存先までの相対パスを`os.path.relpath()`で機械的に算出する共通関数。
+  固定文字列の`../`/`../../`を手作業で選ぶ実装をやめた。POSIX区切りへ変換、`allowed_root`外の
+  参照を拒否、存在しないファイル・ディレクトリを拒否する
+- [x] `render_final_comparison_html()`に`html_path`引数を追加し、`relative_asset_path()`で
+  元画像・Phase 10.14プレビュー・Phase 10.15完成画像の3種すべての相対パスを算出するよう修正
+- [x] `_validate_comparison_assets_exist()`（新規）: HTML書き出し前に、各ページの必須参照
+  （元画像・プレビューは常に必須、完成画像はそのページが成功した場合のみ必須）が実在するかを
+  検証し、1件でも欠ければページ番号・区分・期待パス・理由を含むエラーでHTML生成そのものを拒否する
+- [x] `validate_comparison_html_references(html_path, allowed_root)`（新規）: 書き出し済みの
+  HTMLを`html.parser.HTMLParser`で実際に解析し、全`<img src>`について外部URL/絶対パス/`file://`
+  でないこと・`allowed_root`内に解決されること・実在すること・Pillowで読み込めることを検証し、
+  `image_reference_count`/`resolved_reference_count`/`missing_reference_count`/
+  `broken_references`/`all_images_resolvable`を返す
+- [x] `src/cli.py`: `render-final-images`の実行順序を変更し、`final_comparison.html`書き出し後に
+  上記の検証を実行、結果を`final_render_report.json`（`comparison_html_validation`キー）・
+  `final_render_report.md`・標準出力バナーへ記録する。検証に失敗した場合は非ゼロ終了する
+
+### 監査（他の比較HTML生成機能）
+
+同型の相対パス直書き問題が無いか、以下を実データで監査した（`validate_comparison_html_references`
+を汎用的に転用して実施）。
+
+| HTML | 画像参照数 | 解決成功数 | 結果 |
+|---|---:|---:|---|
+| `ocr_comparison/review.html` | 11 | 11 | 問題なし |
+| `content_brushup/review.html` | 11 | 11 | 問題なし |
+| `brushup_design/comparison.html` | 22 | 22 | 問題なし |
+| `final_image_package/preview/comparison.html` | 22 | 22 | 問題なし（Phase 10.14。`preview/`から
+  2階層上を正しく参照） |
+| `final_image_package/final_comparison.html` | 33 | 33（修正後） | **修正前は元画像11件が偶然の
+  同名ディレクトリで表示され、完成画像11件は表示不可だった** |
+
+同型バグは`final_comparison.html`のみで確認された。他4件は既存のまま変更していない。
+
+### テスト（新規17件、`tests/test_final_slide_compositor_paths.py`）
+
+- [x] `relative_asset_path`: 同一ディレクトリ・1階層上・2階層上・子ディレクトリ・POSIX区切り・
+  絶対パス不使用・`allowed_root`外拒否・不存在ファイル拒否・ディレクトリ参照拒否
+- [x] `final_comparison.html`: 正しい相対パス（`../assets/...`等）を含み誤った`../../...`を
+  含まないこと、ページ数×3件の画像参照、全参照解決可能・Pillow読込可能、プレビュー/元画像欠落時の
+  拒否、外部URL・`file://`不使用
+- [x] 任意のoutput-dir階層（`tmp_path/a/b/c/output/ocr_engine_eval`のような深いネスト）でも
+  正しく動作することを確認（パス階層を固定で仮定しない）
+- [x] Phase 10.14の`preview/comparison.html`が全参照解決可能であることの回帰確認
+- [x] 既存の`tests/test_final_slide_compositor.py`の`render_final_comparison_html`呼び出しへ
+  `html_path`引数を追加
+- [x] 既存1092件+今回17件（`tests/test_final_slide_compositor_paths.py`）すべて成功
+
+### 実データ確認
+
+- `prepare-final-image-package` → `render-final-images`を再実行し、`background_master.png`が
+  変更されていないことをMD5で確認した
+- `final_comparison.html`の全`<img src>`が`../assets/page_NNN.jpeg`・
+  `../rendered_brushup_preview/page_NNN.png`・`../rendered_final/page_NNN.png`（1階層上）に
+  修正されたことを確認した
+- 実データ11ページで、期待画像参照数33・実画像参照数33・解決成功数33・欠落数0
+  （`final_render_report.json`の`comparison_html_validation`）を確認した
+- 元画像11/11・Phase 10.14プレビュー11/11・Phase 10.15完成画像11/11がすべて表示されることを、
+  簡易HTTPサーバ経由でブラウザに実際に読み込ませ、ネットワークログで全33件が200 OKであること・
+  コンソールエラーが無いこと・ページテキスト抽出で全11ページの内容が正しく表示されていることを
+  確認した
+
+### 完了条件との対応
+
+- [x] final_comparison.htmlの相対パスを修正
+- [x] 文字列直書きではなくHTML位置から算出（`relative_asset_path`）
+- [x] 元画像11/11表示・Phase 10.14画像11/11表示・Phase 10.15画像11/11表示
+- [x] 全33参照を解決・欠落0・Pillow読込成功33/33
+- [x] output外参照なし
+- [x] 実ブラウザで比較可能（簡易HTTPサーバ経由。`file://`は本ブラウザツールで未対応のため使用不可
+  だったが、HTTP経由での実ブラウザ確認は実施した）
+- [x] 同型の他HTMLを監査（4件とも問題なし）
+- [x] テスト成功
+- [x] 実データで再生成・確認
+- [x] 比較HTMLを実際に使用できる状態
+
+### 残課題
+
+- 実ブラウザ確認は`file://`ではなく簡易HTTPサーバ経由で実施した（本セッションのブラウザツールが
+  `file://`ナビゲーションに対応していないため）。ユーザー環境で`open final_comparison.html`を
+  直接実行した場合の動作は未確認だが、相対パス自体はブラウザのプロトコルに依存しないため、
+  同様に動作すると考えられる
+
+### Codexに判断してほしい点
+
+1. 同様の相対パス算出ロジック（`relative_asset_path`）を、既存の4つの比較HTML生成機能
+  （`ocr_comparison`/`content_brushup`/`brushup_design`/Phase 10.14 `preview/comparison.html`）
+  へも将来的に統一するか、現状問題が無いため個別実装のままとするか

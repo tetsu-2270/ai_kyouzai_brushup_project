@@ -5,10 +5,17 @@ import json
 import sys
 from pathlib import Path
 
+from . import brushup_renderer
 from .canva_client import write_canva_sync_report
 from .canva_renderer import render_canva_design
+from . import content_brushup
+from . import content_brushup_apply
 from .docx_renderer import write_docx
 from .execution_logger import ExecutionLogger, TeeStderr
+from . import final_image_package
+from . import final_image_renderer
+from . import final_slide_compositor
+from . import image_brushup_design
 from .image_renderer import render_document_images
 from .import_source import import_source
 from .lesson_pages import LessonDocument, build_lesson_pages, render_review_report, write_lesson_pages_json
@@ -623,6 +630,138 @@ def _print_ocr_review_apply_notice(plan, paths, *, mode: str, result=None) -> No
     print("\n".join(lines))
 
 
+def _print_content_brushup_prepare_notice(paths, status) -> None:
+    """`prepare-content-brushup`実行後、標準出力へコピー可能な固定の1文を表示する。"""
+    rel_dir = content_brushup._relative_output_dir(paths.output_dir)
+    instructions_rel = f"{rel_dir}/{content_brushup.CONTENT_BRUSHUP_DIR_NAME}/{content_brushup.INSTRUCTIONS_FILENAME}"
+    snapshot_note = "既存スナップショットを再作成しました（--force指定）" if (status.exists and status.stale) else (
+        "既存の最新スナップショットをそのまま使用します" if status.exists else "スナップショットを新規作成しました"
+    )
+    message = (
+        "\nCONTENT_BRUSHUP_PREPARE: passed\n"
+        f"スナップショット: {snapshot_note}\n"
+        f"指示書: {instructions_rel}\n"
+        "\n"
+        "Claude CodeまたはCodexへ次の1文を渡してください:\n"
+        f"{instructions_rel}を読み、記載された手順を最後まで実行してください。\n"
+    )
+    print(message)
+
+
+def _print_content_brushup_apply_notice(plan, paths, *, mode: str, result=None) -> None:
+    """`apply-content-brushup`実行後、標準出力へ固定書式の判定バナーと次の操作を表示する。"""
+    verdict = "passed" if plan.passed else "failed"
+    lines: list[str] = []
+
+    if mode == "dry_run":
+        lines.append(f"CONTENT_BRUSHUP_APPLY_DRY_RUN: {verdict}")
+        lines.append(f"変更予定ページ: {_page_list_or_none([p.page_no for p in plan.changed_pages]) if plan.passed else 'なし'}")
+        lines.append(f"変更なしページ: {_page_list_or_none([p.page_no for p in plan.unchanged_pages]) if plan.passed else 'なし'}")
+        lines.append(f"反映不可ページ: {_page_list_or_none([p.page_no for p in plan.not_reflectable_pages])}")
+        if plan.errors:
+            lines.append(f"全体エラー: {'; '.join(plan.errors)}")
+        lines.append(f"レビュー画面: {paths.review_html_path}")
+        lines.append(f"レポート: {paths.content_dir / 'apply_report.md'}")
+        lines.append("次の操作:")
+        if plan.passed:
+            lines.append(f"python3 -m src.cli apply-content-brushup --output-dir {paths.output_dir} --apply")
+        else:
+            lines.append("反映不可ページを解消してから（候補JSONの手動修正・AIエージェントによる再作成）、再度dry-runを実行してください。")
+    else:
+        lines.append(f"CONTENT_BRUSHUP_APPLY: {verdict}")
+        if plan.passed:
+            applied_pages = [p.page_no for p in plan.changed_pages] if (result and result.wrote_changes) else []
+            unchanged_pages = [p.page_no for p in plan.unchanged_pages] if result else [p.page_no for p in plan.pages]
+            lines.append(f"反映ページ: {_page_list_or_none(applied_pages)}")
+            lines.append(f"変更なしページ: {_page_list_or_none(unchanged_pages)}")
+            lines.append(f"バックアップ: {result.backup_path if (result and result.backup_path) else '(作成していません。変更なしのため)'}")
+        else:
+            lines.append(f"反映不可ページ: {_page_list_or_none([p.page_no for p in plan.not_reflectable_pages])}")
+            if plan.errors:
+                lines.append(f"全体エラー: {'; '.join(plan.errors)}")
+        lines.append(f"レポート: {paths.content_dir / 'apply_report.md'}")
+        lines.append("次の操作:")
+        if plan.passed and result and result.wrote_changes:
+            lines.append("本文が更新されました。既存のbrushup_designは古い本文を前提としている可能性があります。")
+            lines.append(f"python3 -m src.cli prepare-image-brushup --output-dir {paths.output_dir}")
+        elif plan.passed:
+            lines.append("変更はありませんでした（追加の操作は不要です）。")
+        else:
+            lines.append("反映不可ページを解消してから（候補JSONの手動修正・AIエージェントによる再作成）、再度実行してください。")
+
+    print("\n".join(lines))
+
+
+def _print_image_brushup_prepare_notice(paths) -> None:
+    """`prepare-image-brushup`実行後、標準出力へコピー可能な固定の1文を表示する。"""
+    rel_dir = image_brushup_design._relative_output_dir(paths.output_dir)
+    instructions_rel = f"{rel_dir}/{image_brushup_design.DESIGN_DIR_NAME}/{image_brushup_design.INSTRUCTIONS_FILENAME}"
+    message = (
+        "\nIMAGE_BRUSHUP_PREPARE: passed\n"
+        f"指示書: {instructions_rel}\n"
+        "\n"
+        "Claude CodeまたはCodexへ次の1文を渡してください:\n"
+        f"{instructions_rel}を読み、記載された手順を最後まで実行してください。\n"
+    )
+    print(message)
+
+
+def _print_image_brushup_render_notice(run, paths) -> None:
+    """`render-brushup`実行後、標準出力へ固定書式の判定バナーを表示する。"""
+    verdict = "passed" if not run.failed_pages else "failed"
+    lines = [f"IMAGE_BRUSHUP_RENDER: {verdict}"]
+    lines.append(f"生成ページ数: {len(run.succeeded_pages)} / {run.total_pages}")
+    if run.failed_pages:
+        lines.append(f"失敗ページ: {_page_list_or_none(run.failed_pages)}")
+    lines.append(f"ブラッシュアップ画像: {paths.rendered_brushup_dir}/")
+    lines.append(f"比較画面: {paths.comparison_html_path}")
+    lines.append(f"レポート: {paths.render_report_md_path}")
+    print("\n".join(lines))
+
+
+def _print_final_image_package_notice(run, paths) -> None:
+    """`prepare-final-image-package`実行後、標準出力へ固定書式の判定バナーとCodex向け1文を表示する。"""
+    verdict = "passed" if not run.failed_pages else "failed"
+    lines = [f"FINAL_IMAGE_PACKAGE_PREPARE: {verdict}"]
+    lines.append(f"生成ページ数: {len(run.succeeded_pages)} / {run.total_pages}")
+    if run.failed_pages:
+        lines.append(f"失敗ページ: {_page_list_or_none(run.failed_pages)}")
+    canvas = run.master_layout["canvas"]
+    card = run.master_layout["regions"]["content_card"]
+    lines.append(f"共通キャンバス: {canvas['width']}x{canvas['height']}")
+    lines.append(f"共通本文カード: x={card['x']}, y={card['y']}, width={card['width']}, height={card['height']}")
+    lines.append(f"マスターレイアウト: {paths.master_layout_path}")
+    lines.append(f"プレビュー確認画面: {paths.comparison_html_path}")
+    lines.append(f"マスターガイド画像: {paths.master_guides_path}")
+    lines.append(f"指示書: {paths.instructions_path}")
+    lines.append("")
+    lines.append("rendered_final/（完成画像）はこの工程ではまだ生成されていません。")
+    lines.append("Codexへ次の1文を渡してください（Phase 10.15）:")
+    lines.append(run.handoff_sentence)
+    print("\n".join(lines))
+
+
+def _print_render_final_images_notice(run, paths, comparison_html_validation: dict) -> None:
+    """`render-final-images`実行後、標準出力へ固定書式の判定バナーを表示する。"""
+    verdict = "passed" if (not run.failed_pages and comparison_html_validation["all_images_resolvable"]) else "failed"
+    lines = [f"FINAL_IMAGE_RENDER: {verdict}"]
+    lines.append(f"生成ページ数: {len(run.succeeded_pages)} / {run.total_pages}")
+    if run.failed_pages:
+        lines.append(f"失敗ページ: {_page_list_or_none(run.failed_pages)}")
+    lines.append(f"背景: {run.background_path}")
+    lines.append(f"完成画像: {paths.rendered_final_dir}/")
+    lines.append(f"比較画面: {paths.final_comparison_html_path}")
+    lines.append(
+        f"比較画面の画像参照: {comparison_html_validation['resolved_reference_count']}"
+        f" / {comparison_html_validation['image_reference_count']}"
+        f"（欠落: {comparison_html_validation['missing_reference_count']}）"
+    )
+    if not comparison_html_validation["all_images_resolvable"]:
+        lines.append(f"解決できない参照: {comparison_html_validation['broken_references']}")
+    lines.append(f"レポート: {paths.final_render_report_md_path}")
+    print("\n".join(lines))
+
+
 def regenerate(
     input_path: str,
     output_format: str,
@@ -953,6 +1092,97 @@ def main() -> None:
         "--apply", action="store_true", help="検証に成功した場合に限り、実際にlesson_pages.jsonへ反映する（--dry-runと排他）"
     )
 
+    prepare_content_brushup_parser = subparsers.add_parser(
+        "prepare-content-brushup",
+        help="確定済みlesson_pages.jsonから、OCR確定原文スナップショットと、AIエージェント"
+        "（Claude Code/Codex）向けの教材本文ブラッシュアップ指示書（AI_CONTENT_BRUSHUP.md）を生成する",
+    )
+    prepare_content_brushup_parser.add_argument(
+        "--output-dir", required=True,
+        help="build-allの出力先ディレクトリ（例: output/ocr_engine_eval）。"
+        "既定で<output-dir>/editable/lesson_pages.jsonを読み込む",
+    )
+    prepare_content_brushup_parser.add_argument(
+        "--force", action="store_true", default=False,
+        help="既存のOCR確定原文スナップショットが現在のlesson_pages.jsonと異なる場合でも、"
+        "強制的に作り直す（既存の作業中候補pages/progress.json/candidates.jsonは削除しない。"
+        "スナップショットが変わったため、それらは古い候補として扱われる）",
+    )
+
+    apply_content_brushup_parser = subparsers.add_parser(
+        "apply-content-brushup",
+        help="AIエージェントが作成した教材本文ブラッシュアップ候補（content_brushup/candidates.json）を、"
+        "確認操作（--dry-run→--apply）を経てeditable/lesson_pages.jsonへ安全に反映する",
+    )
+    apply_content_brushup_parser.add_argument(
+        "--output-dir", required=True, help="build-allの出力先ディレクトリ",
+    )
+    apply_content_brushup_parser.add_argument(
+        "--pages", default=None, help='対象ページの絞り込み（例: "1,4,7-11"）。省略時はcandidates.json全ページが対象',
+    )
+    apply_content_brushup_mode_group = apply_content_brushup_parser.add_mutually_exclusive_group(required=True)
+    apply_content_brushup_mode_group.add_argument(
+        "--dry-run", action="store_true", help="実際には書き込まず、反映予定の内容だけレポートに出す（--applyと排他）",
+    )
+    apply_content_brushup_mode_group.add_argument(
+        "--apply", action="store_true", help="検証に成功した場合に限り、実際にlesson_pages.jsonへ反映する（--dry-runと排他）",
+    )
+
+    prepare_image_brushup_parser = subparsers.add_parser(
+        "prepare-image-brushup",
+        help="確定済みlesson_pages.jsonと元画像から、AIエージェント（Claude Code/Codex）向けの"
+        "画像デザイン指示書（AI_IMAGE_BRUSHUP.md）を生成する",
+    )
+    prepare_image_brushup_parser.add_argument(
+        "--output-dir", required=True,
+        help="build-allの出力先ディレクトリ（例: output/ocr_engine_eval）。"
+        "既定で<output-dir>/editable/lesson_pages.jsonを読み込む",
+    )
+
+    render_brushup_parser = subparsers.add_parser(
+        "render-brushup",
+        help="AIエージェントが作成したデザインJSON（brushup_design/pages/page_NNN.json）と"
+        "確定済みlesson_pages.jsonから、決定論的にブラッシュアップ済み教材画像を生成する"
+        "（本文はlesson_pages.jsonから取得し、デザインJSON内の文字列は使用しない）",
+    )
+    render_brushup_parser.add_argument("--output-dir", required=True, help="build-allの出力先ディレクトリ")
+    render_brushup_parser.add_argument(
+        "--font-path", default=None,
+        help="画像描画に使う日本語フォントファイルのパス（省略時は環境の日本語フォントを自動探索）",
+    )
+
+    prepare_final_image_package_parser = subparsers.add_parser(
+        "prepare-final-image-package",
+        help="確定済みlesson_pages.jsonとPhase 10.12の画像デザインから、全ページ共通の"
+        "スライドマスター（MASTER_LAYOUT.json）と、Codex（Phase 10.15）向けの自己完結した"
+        "最終画像生成パッケージ（final_image_package/）を生成する（完成画像は生成しない）",
+    )
+    prepare_final_image_package_parser.add_argument(
+        "--output-dir", required=True, help="build-allの出力先ディレクトリ（例: output/ocr_engine_eval）",
+    )
+    prepare_final_image_package_parser.add_argument(
+        "--font-path", default=None,
+        help="プレビュー画像描画に使う日本語フォントファイルのパス（省略時は環境の日本語フォントを自動探索）",
+    )
+
+    render_final_images_parser = subparsers.add_parser(
+        "render-final-images",
+        help="Codexが生成した文字なし共通背景（rendered_final/background_master.png）と、"
+        "固定スライドマスター（MASTER_LAYOUT.json）・確定済み本文スナップショット（text/page_NNN.json）"
+        "から、完成画像（rendered_final/page_NNN.png）を決定論的に合成する（Phase 10.15）",
+    )
+    render_final_images_parser.add_argument(
+        "--output-dir", required=True, help="build-allの出力先ディレクトリ（例: output/ocr_engine_eval）",
+    )
+    render_final_images_parser.add_argument(
+        "--background", default=None,
+        help="文字なし共通背景画像のパス（省略時は<output-dir>/rendered_final/background_master.png）",
+    )
+    render_final_images_parser.add_argument(
+        "--font-path", default=None,
+        help="完成画像描画に使う日本語フォントファイルのパス（省略時は環境の日本語フォントを自動探索）",
+    )
+
     apply_llm_suggestions_parser = subparsers.add_parser(
         "apply-llm-suggestions",
         help="ChatGPT/Claude等の回答Markdownを読み込み、ページ別の改善候補として構造化"
@@ -1206,6 +1436,245 @@ def main() -> None:
             _print_ocr_review_apply_notice(plan, paths, mode=mode, result=apply_result)
             if not plan.passed:
                 logger.error("apply-ocr-reviewの検証に失敗しました（詳細はレポート参照）")
+                raise SystemExit(1)
+        elif args.command == "prepare-content-brushup":
+            paths = content_brushup.resolve_paths(args.output_dir)
+            document = load_lesson_document(paths.lesson_pages_path)
+            status = content_brushup.check_snapshot_status(paths)
+            if status.exists and status.stale and not args.force:
+                message = (
+                    "既存のOCR確定原文スナップショットは、現在のlesson_pages.jsonと異なります"
+                    "（本文が別の作業で更新された可能性があります）。既存の作業中候補"
+                    "（pages/progress.json/candidates.json）を保護するため、自動的には"
+                    "上書きしません。強制的に作り直す場合は--forceを指定してください"
+                    "（既存候補ファイル自体は削除されません。スナップショットが変わるため、"
+                    "それらは古い候補として扱われます）。"
+                )
+                print(f"エラー: {message}", file=sys.stderr)
+                logger.error(message)
+                logger.add_section("CONTENT_BRUSHUP_PREPARE", {"passed": False, "snapshot_stale": True})
+                raise SystemExit(1)
+
+            written = content_brushup.write_prepare_entry_points(paths, document)
+            validate_generated_file(written["snapshot"], "prepare-content-brushup(snapshot)")
+            validate_generated_file(written["instructions"], "prepare-content-brushup(instructions)")
+            validate_generated_file(written["readme"], "prepare-content-brushup(readme)")
+            logger.add_section("INPUT", {
+                "output_dir": str(paths.output_dir), "lesson_pages_path": str(paths.lesson_pages_path),
+                "pages": len(document.pages), "snapshot_existed": status.exists, "snapshot_was_stale": status.stale,
+            })
+            logger.record_generated_file(written["snapshot"])
+            logger.record_generated_file(written["instructions"])
+            logger.record_generated_file(written["readme"])
+            _print_content_brushup_prepare_notice(paths, status)
+        elif args.command == "apply-content-brushup":
+            paths = content_brushup.resolve_paths(args.output_dir)
+            plan = content_brushup_apply.validate_and_plan(paths, pages_spec=args.pages)
+            mode = "apply" if args.apply else "dry_run"
+            apply_result = None
+            if args.apply and plan.passed:
+                apply_result = content_brushup_apply.apply_document(plan, paths)
+            content_brushup_apply.write_apply_reports(plan, paths, mode=mode, result=apply_result)
+            report_json_path = paths.content_dir / "apply_report.json"
+            report_md_path = paths.content_dir / "apply_report.md"
+            validate_generated_file(report_json_path, "apply-content-brushup(report json)")
+            validate_generated_file(report_md_path, "apply-content-brushup(report md)")
+            logger.add_section("INPUT", {
+                "output_dir": str(paths.output_dir), "lesson_pages_path": str(paths.lesson_pages_path),
+                "pages": args.pages, "mode": mode,
+            })
+            logger.add_section("CONTENT_BRUSHUP_APPLY", {
+                "passed": plan.passed,
+                "target_pages": plan.target_pages,
+                "reflectable_pages": [p.page_no for p in plan.reflectable_pages],
+                "not_reflectable_pages": [p.page_no for p in plan.not_reflectable_pages],
+                "errors": plan.errors,
+                "wrote_changes": apply_result.wrote_changes if apply_result else False,
+            })
+            logger.record_generated_file(report_json_path)
+            logger.record_generated_file(report_md_path)
+            if paths.review_html_path.exists():
+                logger.record_generated_file(paths.review_html_path)
+            if paths.review_summary_path.exists():
+                logger.record_generated_file(paths.review_summary_path)
+            if apply_result and apply_result.wrote_changes:
+                logger.record_generated_file(paths.lesson_pages_path)
+                if apply_result.backup_path:
+                    logger.record_generated_file(apply_result.backup_path)
+            _print_content_brushup_apply_notice(plan, paths, mode=mode, result=apply_result)
+            if not plan.passed:
+                logger.error("apply-content-brushupの検証に失敗しました（詳細はレポート参照）")
+                raise SystemExit(1)
+        elif args.command == "prepare-image-brushup":
+            document = load_lesson_document(Path(args.output_dir) / "editable" / "lesson_pages.json")
+            paths = image_brushup_design.resolve_paths(args.output_dir)
+            written = image_brushup_design.write_design_entry_points(Path(args.output_dir), document)
+            validate_generated_file(written["instructions"], "prepare-image-brushup(instructions)")
+            validate_generated_file(written["readme"], "prepare-image-brushup(readme)")
+            logger.add_section("INPUT", {
+                "output_dir": str(paths.output_dir),
+                "lesson_pages_path": str(paths.lesson_pages_path),
+                "pages": len(document.pages),
+            })
+            logger.record_generated_file(written["instructions"])
+            logger.record_generated_file(written["readme"])
+            _print_image_brushup_prepare_notice(paths)
+        elif args.command == "render-brushup":
+            document = load_lesson_document(Path(args.output_dir) / "editable" / "lesson_pages.json")
+            paths = image_brushup_design.resolve_paths(args.output_dir)
+            designs, design_errors = brushup_renderer.load_design_pages(paths, document)
+            if design_errors:
+                for e in design_errors:
+                    print(f"エラー: {e}", file=sys.stderr)
+                    logger.error(e)
+                logger.add_section("IMAGE_BRUSHUP_RENDER", {"passed": False, "errors": design_errors})
+                raise SystemExit(1)
+
+            run = brushup_renderer.render_all_pages(
+                document, designs, Path(args.output_dir), paths.rendered_brushup_dir, font_path=args.font_path,
+            )
+            paths.design_dir.mkdir(parents=True, exist_ok=True)
+            write_text(
+                paths.render_report_json_path,
+                json.dumps(brushup_renderer.render_report_json(run), ensure_ascii=False, indent=2) + "\n",
+            )
+            write_text(paths.render_report_md_path, brushup_renderer.render_report_markdown(run))
+            write_text(
+                paths.comparison_html_path,
+                brushup_renderer.render_comparison_html(document, designs, run, Path(args.output_dir)),
+            )
+            validate_generated_file(paths.render_report_json_path, "render-brushup(report json)")
+            validate_generated_file(paths.render_report_md_path, "render-brushup(report md)")
+            validate_generated_file(paths.comparison_html_path, "render-brushup(comparison html)")
+            logger.add_section("INPUT", {"output_dir": str(paths.output_dir), "font_path": args.font_path})
+            logger.add_section("IMAGE_BRUSHUP_RENDER", {
+                "passed": not run.failed_pages,
+                "total_pages": run.total_pages,
+                "succeeded_pages": run.succeeded_pages,
+                "failed_pages": run.failed_pages,
+                "template_counts": run.template_counts,
+            })
+            logger.record_generated_file(paths.render_report_json_path)
+            logger.record_generated_file(paths.render_report_md_path)
+            logger.record_generated_file(paths.comparison_html_path)
+            for r in run.pages:
+                if r.output_path:
+                    logger.record_generated_file(r.output_path)
+            _print_image_brushup_render_notice(run, paths)
+            if run.failed_pages:
+                logger.error(f"render-brushupで失敗したページがあります: {run.failed_pages}")
+                raise SystemExit(1)
+        elif args.command == "prepare-final-image-package":
+            document = load_lesson_document(Path(args.output_dir) / "editable" / "lesson_pages.json")
+            paths = final_image_package.resolve_paths(args.output_dir)
+            try:
+                run = final_image_renderer.write_final_image_package(args.output_dir, document, font_path=args.font_path)
+            except ValueError as e:
+                print(f"エラー: {e}", file=sys.stderr)
+                logger.error(str(e))
+                logger.add_section("FINAL_IMAGE_PACKAGE_PREPARE", {"passed": False, "error": str(e)})
+                raise SystemExit(1)
+
+            validate_generated_file(paths.master_layout_path, "prepare-final-image-package(master layout)")
+            validate_generated_file(paths.instructions_path, "prepare-final-image-package(instructions)")
+            validate_generated_file(paths.readme_path, "prepare-final-image-package(readme)")
+            validate_generated_file(paths.package_manifest_path, "prepare-final-image-package(package manifest)")
+            validate_generated_file(paths.asset_manifest_path, "prepare-final-image-package(asset manifest)")
+            validate_generated_file(paths.master_background_prompt_path, "prepare-final-image-package(master background prompt)")
+            validate_generated_file(paths.comparison_html_path, "prepare-final-image-package(comparison html)")
+            validate_generated_file(paths.master_guides_path, "prepare-final-image-package(master guides)")
+
+            logger.add_section("INPUT", {"output_dir": str(paths.output_dir), "font_path": args.font_path})
+            logger.add_section("FINAL_IMAGE_PACKAGE_PREPARE", {
+                "passed": not run.failed_pages,
+                "total_pages": run.total_pages,
+                "succeeded_pages": run.succeeded_pages,
+                "failed_pages": run.failed_pages,
+                "canvas": run.master_layout["canvas"],
+                "content_card": run.master_layout["regions"]["content_card"],
+            })
+            for p in (paths.master_layout_path, paths.instructions_path, paths.readme_path,
+                      paths.package_manifest_path, paths.asset_manifest_path,
+                      paths.master_background_prompt_path, paths.comparison_html_path, paths.master_guides_path):
+                logger.record_generated_file(p)
+            for page_no in run.succeeded_pages:
+                preview_path = paths.preview_dir / f"page_{page_no:03d}.png"
+                if preview_path.exists():
+                    logger.record_generated_file(preview_path)
+                rendered_preview_path = paths.rendered_brushup_preview_dir / f"page_{page_no:03d}.png"
+                if rendered_preview_path.exists():
+                    logger.record_generated_file(rendered_preview_path)
+            _print_final_image_package_notice(run, paths)
+            if run.failed_pages:
+                logger.error(f"prepare-final-image-packageで失敗したページがあります: {run.failed_pages}")
+                raise SystemExit(1)
+        elif args.command == "render-final-images":
+            document = load_lesson_document(Path(args.output_dir) / "editable" / "lesson_pages.json")
+            paths = final_slide_compositor.resolve_paths(args.output_dir)
+            try:
+                run = final_slide_compositor.write_final_images(
+                    args.output_dir, document, background_path=args.background, font_path=args.font_path,
+                )
+            except ValueError as e:
+                print(f"エラー: {e}", file=sys.stderr)
+                logger.error(str(e))
+                logger.add_section("FINAL_IMAGE_RENDER", {"passed": False, "error": str(e)})
+                raise SystemExit(1)
+
+            page_specs = {
+                p.page_no: json.loads((paths.pages_dir / f"page_{p.page_no:03d}.json").read_text(encoding="utf-8"))
+                for p in document.pages
+            }
+            try:
+                comparison_html_text = final_slide_compositor.render_final_comparison_html(
+                    document, run.master_layout, page_specs, run, Path(args.output_dir), paths.final_comparison_html_path,
+                )
+            except ValueError as e:
+                print(f"エラー: {e}", file=sys.stderr)
+                logger.error(str(e))
+                logger.add_section("FINAL_IMAGE_RENDER", {"passed": False, "error": str(e)})
+                raise SystemExit(1)
+            write_text(paths.final_comparison_html_path, comparison_html_text)
+            comparison_html_validation = final_slide_compositor.validate_comparison_html_references(
+                paths.final_comparison_html_path, Path(args.output_dir),
+            )
+
+            report_json = final_slide_compositor.render_final_render_report_json(run)
+            report_json["comparison_html_validation"] = comparison_html_validation
+            write_text(paths.final_render_report_json_path, json.dumps(report_json, ensure_ascii=False, indent=2) + "\n")
+            write_text(
+                paths.final_render_report_md_path,
+                final_slide_compositor.render_final_render_report_markdown(run, comparison_html_validation),
+            )
+            validate_generated_file(paths.final_render_report_json_path, "render-final-images(report json)")
+            validate_generated_file(paths.final_render_report_md_path, "render-final-images(report md)")
+            validate_generated_file(paths.final_comparison_html_path, "render-final-images(comparison html)")
+
+            logger.add_section("INPUT", {"output_dir": str(paths.output_dir), "background": str(run.background_path), "font_path": run.font_path})
+            logger.add_section("FINAL_IMAGE_RENDER", {
+                "passed": not run.failed_pages and comparison_html_validation["all_images_resolvable"],
+                "total_pages": run.total_pages,
+                "succeeded_pages": run.succeeded_pages,
+                "failed_pages": run.failed_pages,
+                "canvas": run.master_layout["canvas"],
+                "content_card": run.master_layout["regions"]["content_card"],
+                "comparison_html_validation": comparison_html_validation,
+            })
+            logger.record_generated_file(paths.final_render_report_json_path)
+            logger.record_generated_file(paths.final_render_report_md_path)
+            logger.record_generated_file(paths.final_comparison_html_path)
+            for r in run.pages:
+                if r.output_path:
+                    logger.record_generated_file(r.output_path)
+            _print_render_final_images_notice(run, paths, comparison_html_validation)
+            if run.failed_pages:
+                logger.error(f"render-final-imagesで失敗したページがあります: {run.failed_pages}")
+                raise SystemExit(1)
+            if not comparison_html_validation["all_images_resolvable"]:
+                logger.error(
+                    "final_comparison.htmlに解決できない画像参照があります: "
+                    f"{comparison_html_validation['broken_references']}"
+                )
                 raise SystemExit(1)
         elif args.command == "apply-llm-suggestions":
             document = load_lesson_document(args.lesson_pages)

@@ -387,6 +387,69 @@ python3 -m src.cli apply-ocr-review --output-dir output/ocr_engine_eval --apply
 
 `--ocr-engine tesseract+vision`＋Claude Codeによる画像照合レビュー（`CLAUDE_OCR_REVIEW.md`の指示に従って生成された`claude_review/candidates.json`）の結果を、`editable/lesson_pages.json`へ安全に反映します。**上記の`apply-ocr-corrections`/`approve-ocr-candidates`とは別のワークフローです**（対象候補のスキーマが異なります。ページ全文単位の候補を扱います）。`--dry-run`/`--apply`は相互排他かつ必須で、反映前に自動でバックアップを作成します。詳細は[`docs/16_apply_ocr_review_workflow.md`](docs/16_apply_ocr_review_workflow.md)を参照してください。
 
+### OCR確定原文を保持したまま教材本文をブラッシュアップ（`prepare-content-brushup` / `apply-content-brushup`）
+
+OCR確定原文（`editable/lesson_pages.json`）は元画像の正確な転記ですが、文章として完成している
+とは限りません。OCR確定原文を証拠として保持したまま、AIエージェント（Claude Code/Codex）が
+教材本文の分かりやすさを改善する候補を作成し、人間の明示操作で反映するには、次を実行します。
+
+```bash
+# Step 1: OCR確定原文スナップショットとAIエージェント向け指示書を生成
+python3 -m src.cli prepare-content-brushup --output-dir output/ocr_engine_eval
+
+# Step 2: 標準出力に表示される1文をClaude CodeまたはCodexへそのまま渡す
+#   （AIエージェントがページごとに本文改善案を作成する）
+
+# Step 3: 分析のみ（書き込みなし）で内容を確認
+python3 -m src.cli apply-content-brushup --output-dir output/ocr_engine_eval --dry-run
+
+# Step 4: 内容を確認したうえで実反映
+python3 -m src.cli apply-content-brushup --output-dir output/ocr_engine_eval --apply
+```
+
+意味・主張・結論・事実を変えない範囲での改善のみを許可し、`risk_level: high`や人間確認が必要な
+候補が1件でもあれば、対象範囲全体を反映不可として扱います（自動でのバイパスはありません）。
+反映後は`editable/backups/`にバックアップが作成され、`prepare-image-brushup`の再実行が案内されます
+（本文が変わると文字量が変わるため、古いデザインJSONのままでは`render-brushup`が拒否します）。
+詳細は[`docs/18_content_brushup_workflow.md`](docs/18_content_brushup_workflow.md)を参照してください。
+
+### 確定済み本文で教材画像をブラッシュアップ生成（`prepare-image-brushup` / `render-brushup`）
+
+`rendered/`（前述）は元画像をそのままコピーするだけで、見た目を改善した完成画像ではありません。確定済みの正確な本文（`editable/lesson_pages.json`）と元画像を使い、実際に見た目を再設計した教材画像を生成するには、次の3段階を実行します。
+
+```bash
+# Step 1: AIエージェント向けデザイン指示書を生成
+python3 -m src.cli prepare-image-brushup --output-dir output/ocr_engine_eval
+
+# Step 2: 標準出力に表示される1文をClaude CodeまたはCodexへそのまま渡す
+#   （AIエージェントが元画像を視覚確認しながら、ページごとのデザインJSONを作成する）
+
+# Step 3: 決定論的レンダラーでブラッシュアップ済み画像を生成
+python3 -m src.cli render-brushup --output-dir output/ocr_engine_eval
+```
+
+画像生成AIへ本文を描かせることはありません（誤字・欠落・架空文字を防ぐため）。AIエージェントはレイアウト・配色等のデザイン判断だけを行い、実際の文字描画は`lesson_pages.json`の確定済み文字列を使って`render-brushup`（Pillowベースの決定論的レンダラー）が行います。生成物は`rendered_brushup/page_NNN.png`（既存の`rendered/`とは別ディレクトリ）と、元画像・ブラッシュアップ画像を並べて確認できる`brushup_design/comparison.html`です。詳細は[`docs/17_image_brushup_workflow.md`](docs/17_image_brushup_workflow.md)を参照してください。
+
+### 統一スライドマスターとCodex向け最終画像生成パッケージを生成（`prepare-final-image-package`）
+
+`rendered_brushup/`（前述）はページごとにカードの大きさ・位置が変わり、デッキ全体の統一感がありません。全ページ完全に共通のスライドマスター（キャンバスサイズ・本文カードの位置/大きさ/角丸/影・注記位置・ページ番号位置）を1つに固定し、Codex（次工程）が最終ビジュアルを生成するための自己完結パッケージを作るには、次のコマンドを実行します。
+
+```bash
+python3 -m src.cli prepare-final-image-package --output-dir output/ocr_engine_eval
+```
+
+**このコマンドは完成画像を生成しません。** 生成されるのは、Codex向けの指示書（`final_image_package/CODEX_FINAL_IMAGE_GENERATION.md`）、全ページ共通のマスター定義（`final_image_package/MASTER_LAYOUT.json`）、ページ別の内部レイアウト仕様・確定済み本文・背景生成プロンプト、レイアウト確認用のプレビュー（`final_image_package/preview/`・`rendered_brushup_preview/`。完成画像ではありません）です。実行後に標準出力へ表示される1文をそのままCodexへ渡してください。詳細は[`docs/19_final_image_package_workflow.md`](docs/19_final_image_package_workflow.md)を参照してください。
+
+### Codex生成背景から完成教材画像を合成（`render-final-images`）
+
+Codexが`CODEX_FINAL_IMAGE_GENERATION.md`の指示に従って文字なし共通背景（`rendered_final/background_master.png`）を生成し終えたら、次のコマンドで完成画像を決定論的に合成します。
+
+```bash
+python3 -m src.cli render-final-images --output-dir output/ocr_engine_eval
+```
+
+共通背景・固定マスター（`MASTER_LAYOUT.json`）・確定済み本文スナップショット（`final_image_package/text/page_NNN.json`）だけから、`rendered_final/page_NNN.png`を生成します。背景・フォントは`--background`/`--font-path`で上書きできます。入力に不整合（背景サイズ不一致・古い本文・ページ欠落等）があれば完成画像を1枚も生成せず非ゼロ終了します。詳細は[`docs/20_final_image_render_workflow.md`](docs/20_final_image_render_workflow.md)を参照してください。
+
 ### LLM手作業投入用ファイルを生成（`llm-handoff`）
 
 ```bash

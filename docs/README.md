@@ -22,6 +22,10 @@
 | [`14_apply_ocr_corrections_workflow.md`](14_apply_ocr_corrections_workflow.md) | **承認済みOCR補正候補の反映ワークフロー** | `apply-ocr-corrections`コマンドの使い方、`status: approved`の候補だけを反映する仕組み、元ファイルを上書きしないこと、`ocr_apply_report.md`の読み方、反映されない主な理由、`approve-ocr-candidates`による高重要度候補の一括approved化 |
 | [`15_llm_suggestion_candidates_workflow.md`](15_llm_suggestion_candidates_workflow.md) | **LLM改善案の構造化候補生成ワークフロー** | `apply-llm-suggestions`コマンドの使い方、LLM回答Markdownの想定形式・表記揺れ対応、`llm_suggestion_candidates.json`の読み方、statusの使い方、将来の`apply-approved-llm-suggestions`へのつながり |
 | [`16_apply_ocr_review_workflow.md`](16_apply_ocr_review_workflow.md) | **Claude Code画像照合レビュー候補の反映ワークフロー** | `apply-ocr-review`コマンドの使い方（`--dry-run`→`--apply`）、`proposed_text`から`title`/`body`/`summary`/`image_text`/`canva_prompt`/`video_scene`への反映ルール、反映不可ページの扱い、バックアップ・原子的書き込み・冪等性、`apply-ocr-corrections`との違い |
+| [`17_image_brushup_workflow.md`](17_image_brushup_workflow.md) | **教材画像ブラッシュアップ生成ワークフロー** | `prepare-image-brushup`→AI作業エージェントによるデザイン設計→`render-brushup`の3段階、デザインJSON仕様（本文複製禁止・許可ブロック種別・`group`/`line_range`/`column_ratio`による情報階層再現）、オーバーフロー対策、元画像コピー検出、`rendered/`との違い |
+| [`18_content_brushup_workflow.md`](18_content_brushup_workflow.md) | **教材本文ブラッシュアップワークフロー** | `prepare-content-brushup`→AI作業エージェントによる本文改善案作成→`apply-content-brushup`の4段階、OCR確定原文（証拠）とブラッシュアップ済み本文の分離、`risk_level`による全体停止方式の安全設計、Phase 10.12との接続（本文更新後の古いデザイン拒否） |
+| [`19_final_image_package_workflow.md`](19_final_image_package_workflow.md) | **統一スライドマスター・Codex向け最終画像生成パッケージワークフロー** | `prepare-final-image-package`コマンドの使い方、全ページ共通の`MASTER_LAYOUT.json`（キャンバス・本文カード等の固定領域）、カード内部レイアウトの自動判定（1段組み/2段組み・強調）、Codex向け自己完結指示書（`CODEX_FINAL_IMAGE_GENERATION.md`）、`rendered_brushup_preview/`・`final_image_package/preview/`はまだ完成画像ではないこと、Phase 10.15（次工程）との境界 |
+| [`20_final_image_render_workflow.md`](20_final_image_render_workflow.md) | **完成教材画像 決定論的レンダリングワークフロー（Phase 10.15）** | `render-final-images`コマンドの使い方、Codex生成済み共通背景（`rendered_final/background_master.png`）と固定マスター・確定済み本文スナップショットからの完成画像合成、入力検証項目、`text/page_NNN.json`の`notice`フィールドが空になる既知のデータの癖への対応、オーバーフロー時の非切り詰め失敗、`final_render_report.*`/`final_comparison.html` |
 | [`feedback_template.md`](feedback_template.md) | フィードバックシート（テンプレート） | 実利用テストの結果を記録するチェックリスト。コピーして使う |
 | [`99_implementation_review_brief.md`](99_implementation_review_brief.md) | 時点レビュー・スナップショット | Phase 1〜4完了時点（2026-07-04）の記録。以降更新しない運用ルールは同ファイル冒頭を参照 |
 | [`99_phase7_review_2026-07-05.md`](99_phase7_review_2026-07-05.md) | 時点レビュー・スナップショット | Phase 7（restructure品質改善・出力のMarkdown混入対策一式）完了時点（2026-07-05）の記録 |
@@ -46,6 +50,10 @@
 - **OCR補正候補を承認したので`lesson_pages.json`に反映したい** → `14_apply_ocr_corrections_workflow.md`（`apply-ocr-corrections`コマンドで`status: approved`の候補だけを安全に反映する）
 - **高重要度のOCR候補を1件ずつapprovedにするのが手間** → `14_apply_ocr_corrections_workflow.md`「高重要度OCR候補の一括approved化」（`approve-ocr-candidates`コマンドで明確な候補だけ一括承認する）
 - **Claude Codeが画像照合レビューした`claude_review/candidates.json`を`lesson_pages.json`に反映したい** → `16_apply_ocr_review_workflow.md`（`apply-ocr-review --dry-run`→`--apply`。`apply-ocr-corrections`とは別のコマンド）
+- **確定済みの本文を使って、実際に見た目を改善した教材画像を作りたい（`rendered/`は元画像のコピーで満足できない）** → `17_image_brushup_workflow.md`（`prepare-image-brushup`→AI作業エージェントによるデザイン設計→`render-brushup`）
+- **OCR確定原文はあるが、文章表現自体が分かりにくい・改善したい（画像レイアウトの改善だけでは不十分）** → `18_content_brushup_workflow.md`（`prepare-content-brushup`→AI作業エージェントによる本文改善案作成→`apply-content-brushup --dry-run`→`--apply`。OCR確定原文はスナップショットとして変更せず保持される）
+- **Phase 10.12のプレビューはページごとにカードの大きさ・位置がバラバラで見た目が揃わない・Codexに最終ビジュアルを作らせたい** → `19_final_image_package_workflow.md`（`prepare-final-image-package`コマンド。全ページ共通の`MASTER_LAYOUT.json`を作り、Codex向けの最終画像生成パッケージ一式を出力する。完成画像そのものはまだ生成しない）
+- **Codexが文字なし背景を生成し終わった。確定済み本文を合成して実際の完成画像（`rendered_final/page_NNN.png`）が欲しい** → `20_final_image_render_workflow.md`（`render-final-images`コマンド。共通背景・固定マスター・確定済み本文スナップショットから決定論的に完成画像を合成する）
 - **ChatGPT/Claude等の改善案をどう`lesson_pages.json`に反映すればよいか迷う** → `15_llm_suggestion_candidates_workflow.md`（`apply-llm-suggestions`コマンドでLLM回答を構造化候補に変換してから採用判断する）
 - **過去のレビュー経緯を知りたい** → `99_implementation_review_brief.md`（ただし現行仕様の正ではない点に注意）
 

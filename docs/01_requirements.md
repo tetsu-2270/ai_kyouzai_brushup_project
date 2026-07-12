@@ -50,6 +50,9 @@ AI教材ブラッシュアップシステム
 | `import-source` | 元資料（画像/PDF/PPTX）からテキスト・画像を自動取り込み、`imported_pages.json`（pages形式互換）+画像アセットを生成 | 必須機能 |
 | `build-all` | `import-source`→`lesson-pages`→完成output生成を一括実行（`--mode proofread\|restructure`、`--requirements`、`--output-format`、`--font-path`、`--allow-empty-ocr`、`--ocr-engine`）。作成者向けの主導線。画像inputでOCRが実質使えない場合、取り込みページが0件の場合、指定output-formatの成果物が生成されない場合はエラー終了する（Phase 10.1・10.2）。`--ocr-engine tesseract+vision`（既定は`tesseract`。macOS専用・任意）でApple Vision OCRとの比較を追加できる（今回追加） | 必須機能 |
 | `regenerate` | `output/editable/lesson_pages.json`（編集済み中間ファイル）から完成outputを再生成（`--output-format`、`--font-path`）。pagesが0件、または指定output-formatの成果物が生成されない場合はエラー終了する（Phase 10.2） | 必須機能 |
+| `prepare-content-brushup` / `apply-content-brushup` | OCR確定原文を証拠として保持したまま、AIエージェント（Claude Code/Codex）が教材本文の分かりやすさを改善する候補を作成し、人間の明示操作（`--dry-run`→`--apply`）で`lesson_pages.json`へ反映する（Phase 10.13。詳細は[`docs/18_content_brushup_workflow.md`](18_content_brushup_workflow.md)） | 必須機能（補助） |
+| `prepare-image-brushup` / `render-brushup` | 確定済み本文と元画像から、AIエージェントが設計したデザインJSONを基に決定論的にブラッシュアップ済み教材画像を生成する（Phase 10.12。詳細は[`docs/17_image_brushup_workflow.md`](17_image_brushup_workflow.md)） | 必須機能（補助） |
+| `prepare-final-image-package` | 確定済み本文とPhase 10.12のデザインから、全ページ共通のスライドマスター（`MASTER_LAYOUT.json`）と、Codex（Phase 10.15・次工程）向けの自己完結した最終画像生成パッケージ（`final_image_package/`）・統一マスターによるプレビュー（`rendered_brushup_preview/`）を生成する。完成画像（`rendered_final/`）は生成しない（Phase 10.14。詳細は[`docs/19_final_image_package_workflow.md`](19_final_image_package_workflow.md)） | 必須機能（補助） |
 | `lesson-pages` | 正データ`lesson_pages.json`を生成（`--mode proofread\|restructure\|generate`、`--requirements`、`--plan-output`） | 必須機能 |
 | `review-report` | `lesson_pages.json`の`role`/`source_page_no`を制作者確認用Markdownに整理 | 必須機能（制作者向け補助） |
 | `generate` | `lesson_pages.json`から教材ブラッシュアップ設計書(`brushup.md`)を生成 | 必須機能 |

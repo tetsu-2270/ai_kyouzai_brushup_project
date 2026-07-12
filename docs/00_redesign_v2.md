@@ -2,6 +2,19 @@
 
 > **この文書はv2再設計時点の一次設計資料であり、現行仕様の正は[`docs/01_requirements.md`](01_requirements.md)・[`docs/02_architecture.md`](02_architecture.md)・[`docs/03_data_format.md`](03_data_format.md)・[`docs/04_output_spec.md`](04_output_spec.md)を参照してください。**
 > Phase6以降で追加された`role`・`--plan-output`・`review-report`などは、現行仕様書側（上記4ファイル）を正とします。本文書はrestructure/generateの3モード構想・再設計の背景を理解するための歴史的資料として保持します。
+>
+> **Phase 10.13追記: OCR確定原文とブラッシュアップ済み本文の分離について。** `proofread`モードは
+> 「元ファイルを神とする」設計だが、これは「元画像に書かれていた文字を正確に転記する」ことを
+> 指すのであって、「転記した文章が完成された表現である」ことまでは意味しない。Phase 10.13で、
+> OCR確定原文（画像照合済みの正確な転記。証拠として不変に保持する）と、それを基に読みやすさを
+> 改善したブラッシュアップ済み本文（人間の明示操作を経て`lesson_pages.json`へ反映される）を
+> 明確に分離する工程を追加した。詳細は[`docs/18_content_brushup_workflow.md`](18_content_brushup_workflow.md)を参照。
+>
+> **Phase 10.14追記: 統一スライドマスターとCodex向け最終画像生成パッケージについて。** Phase 10.12の
+> プレビューはページごとにカード寸法が変わる設計だったため、全ページ完全に共通のスライドマスター
+> （`MASTER_LAYOUT.json`）を定義し、Codex（Phase 10.15・次工程）が最終ビジュアルを生成するための
+> 自己完結パッケージ（`final_image_package/`）を作る工程を追加した。本Phase自体は完成画像
+> （`rendered_final/`）を生成しない。詳細は[`docs/19_final_image_package_workflow.md`](19_final_image_package_workflow.md)を参照。
 
 ## 1. この設計書の目的
 

@@ -1,0 +1,151 @@
+from __future__ import annotations
+
+import json
+
+import pytest
+from PIL import Image
+
+from src.cli import main
+from src.final_slide_compositor import resolve_paths
+from src.image_brushup_design import resolve_paths as design_resolve_paths
+from src.image_renderer import resolve_font_path
+from tests.test_brushup_renderer import _design, _write_manifest_and_pages
+
+_FONT_PATH = resolve_font_path(None)
+
+
+def _write_lesson_pages(output_dir, pages: list[dict]) -> None:
+    editable_dir = output_dir / "editable"
+    editable_dir.mkdir(parents=True, exist_ok=True)
+    document = {
+        "metadata": {
+            "project_title": "テスト教材", "mode": "proofread", "source_policy": "preserve_original",
+            "target_audience": "テスト", "tone": "", "generated_at": "2026-07-12T00:00:00+09:00",
+        },
+        "pages": pages,
+    }
+    (editable_dir / "lesson_pages.json").write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+
+
+def _lesson_page_dict(page_no: int, title: str, body: str, source_image: str) -> dict:
+    return {
+        "page_no": page_no, "source_page_no": [page_no], "role": "", "title": title, "body": body,
+        "summary": title, "image_text": title, "layout_instruction": "", "canva_prompt": "",
+        "video_scene": "", "source_image": source_image, "source_assets": [], "notes": "",
+    }
+
+
+def _write_asset(output_dir, page_no, size=(1706, 960)):
+    assets_dir = output_dir / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", size, color=(240, 230, 210)).save(assets_dir / f"page_{page_no:03d}.jpeg")
+
+
+def _prepare_fresh_design(output_dir, page_dicts):
+    design_paths = design_resolve_paths(output_dir)
+    designs = {p["page_no"]: _design(p["page_no"], source_image=p["source_image"]) for p in page_dicts}
+    _write_manifest_and_pages(design_paths.design_dir, designs)
+
+
+def _setup_full(output_dir, page_dicts):
+    _write_lesson_pages(output_dir, page_dicts)
+    for p in page_dicts:
+        _write_asset(output_dir, p["page_no"])
+    _prepare_fresh_design(output_dir, page_dicts)
+
+
+def _run(monkeypatch, argv):
+    monkeypatch.setattr("sys.argv", ["cli"] + argv)
+    main()
+
+
+def _write_background(output_dir, size=(1600, 900)):
+    paths = resolve_paths(output_dir)
+    paths.rendered_final_dir.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", size, color=(235, 225, 205)).save(paths.default_background_path)
+    return paths.default_background_path
+
+
+def test_render_final_images_requires_output_dir(monkeypatch):
+    monkeypatch.setattr("sys.argv", ["cli", "render-final-images"])
+    with pytest.raises(SystemExit):
+        main()
+
+
+def test_render_final_images_generates_full_output(tmp_path, monkeypatch, capsys):
+    output_dir = tmp_path / "out"
+    pages = [_lesson_page_dict(1, "タイトル1", "タイトル1\n本文1\n※無断転載禁止（おとスタ）", "assets/page_001.jpeg")]
+    _setup_full(output_dir, pages)
+    _run(monkeypatch, ["prepare-final-image-package", "--output-dir", str(output_dir), "--font-path", _FONT_PATH or ""])
+    _write_background(output_dir)
+
+    _run(monkeypatch, ["render-final-images", "--output-dir", str(output_dir), "--font-path", _FONT_PATH or ""])
+
+    captured = capsys.readouterr()
+    assert "FINAL_IMAGE_RENDER: passed" in captured.out
+    assert "生成ページ数: 1 / 1" in captured.out
+
+    paths = resolve_paths(output_dir)
+    assert (paths.rendered_final_dir / "page_001.png").exists()
+    assert paths.final_render_report_json_path.exists()
+    assert paths.final_render_report_md_path.exists()
+    assert paths.final_comparison_html_path.exists()
+
+
+def test_render_final_images_supports_background_override(tmp_path, monkeypatch, capsys):
+    output_dir = tmp_path / "out"
+    pages = [_lesson_page_dict(1, "タイトル1", "タイトル1\n本文1\n※無断転載禁止（おとスタ）", "assets/page_001.jpeg")]
+    _setup_full(output_dir, pages)
+    _run(monkeypatch, ["prepare-final-image-package", "--output-dir", str(output_dir)])
+
+    custom_background = tmp_path / "custom_background.png"
+    Image.new("RGB", (1600, 900), color=(210, 210, 230)).save(custom_background)
+
+    _run(monkeypatch, [
+        "render-final-images", "--output-dir", str(output_dir),
+        "--background", str(custom_background), "--font-path", _FONT_PATH or "",
+    ])
+
+    captured = capsys.readouterr()
+    assert "FINAL_IMAGE_RENDER: passed" in captured.out
+    assert str(custom_background) in captured.out
+
+
+def test_render_final_images_fails_cleanly_without_prepare_final_image_package(tmp_path, monkeypatch):
+    output_dir = tmp_path / "out"
+    pages = [_lesson_page_dict(1, "タイトル1", "タイトル1\n本文1\n※無断転載禁止（おとスタ）", "assets/page_001.jpeg")]
+    _write_lesson_pages(output_dir, pages)
+    _write_asset(output_dir, 1)
+    _write_background(output_dir)
+    # prepare-final-image-packageを実行しない。
+
+    monkeypatch.setattr("sys.argv", ["cli", "render-final-images", "--output-dir", str(output_dir)])
+    with pytest.raises(SystemExit):
+        main()
+
+
+def test_render_final_images_fails_cleanly_without_background(tmp_path, monkeypatch):
+    output_dir = tmp_path / "out"
+    pages = [_lesson_page_dict(1, "タイトル1", "タイトル1\n本文1\n※無断転載禁止（おとスタ）", "assets/page_001.jpeg")]
+    _setup_full(output_dir, pages)
+    _run(monkeypatch, ["prepare-final-image-package", "--output-dir", str(output_dir)])
+    # 背景を用意しない。
+
+    monkeypatch.setattr("sys.argv", ["cli", "render-final-images", "--output-dir", str(output_dir)])
+    with pytest.raises(SystemExit):
+        main()
+
+
+def test_render_final_images_does_not_affect_existing_rendered_brushup_preview(tmp_path, monkeypatch):
+    output_dir = tmp_path / "out"
+    pages = [_lesson_page_dict(1, "タイトル1", "タイトル1\n本文1\n※無断転載禁止（おとスタ）", "assets/page_001.jpeg")]
+    _setup_full(output_dir, pages)
+    _run(monkeypatch, ["prepare-final-image-package", "--output-dir", str(output_dir)])
+    _write_background(output_dir)
+
+    preview_path = output_dir / "rendered_brushup_preview" / "page_001.png"
+    before = preview_path.read_bytes()
+
+    _run(monkeypatch, ["render-final-images", "--output-dir", str(output_dir)])
+
+    assert preview_path.read_bytes() == before

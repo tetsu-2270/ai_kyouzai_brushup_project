@@ -410,6 +410,89 @@ python3 -m src.cli regenerate --input output/editable/lesson_pages.json --output
 - 読み込んだ`pages`が0件
 - 指定した`--output-format`の成果物が実際には生成されなかった場合
 
+## 教材本文ブラッシュアップ（`prepare-content-brushup` / `apply-content-brushup`。Phase 10.13）
+
+OCR確定原文（`editable/lesson_pages.json`）は元画像の正確な転記であることを示すが、文章として
+完成していることは意味しない。本機能は、OCR確定原文を変更不能な証拠として保持したまま、
+AI作業エージェント（Claude Code/Codex）が教材本文の分かりやすさを改善する候補を作成し、
+人間の明示操作（`--dry-run`→`--apply`）を経て`editable/lesson_pages.json`へ反映する。
+詳細は[`docs/18_content_brushup_workflow.md`](18_content_brushup_workflow.md)を参照。
+
+```text
+output/<output-dir>/
+  content_brushup/
+    VERIFIED_OCR_SNAPSHOT.json   # OCR確定原文の証拠（SHA-256付き。prepare-content-brushupが生成）
+    AI_CONTENT_BRUSHUP.md         # AIエージェント向け本文改善指示書（同上）
+    README.md                     # content_brushup/の説明（同上）
+    pages/page_NNN.json           # ページ別改善候補（指示書を実行したAIエージェントが作成）
+    progress.json                  # 進捗（同上）
+    candidates.json                # 全体集約（同上）
+    review.html                    # 原文と改善案の比較確認画面（apply-content-brushupが生成）
+    review_summary.md              # 人間確認用サマリー（同上）
+    apply_report.json / .md        # 反映結果レポート（同上）
+```
+
+デザインJSONと同様、`original`（OCR確定原文と完全一致）と`proposed`（改善案）を分離して保持し、
+`changes`に変更箇所ごとの理由・`change_type`・`risk_level`を記録する。`risk_level: high`または
+`requires_human_review: true`のページが対象範囲に1件でもあれば、そのページだけでなく対象範囲
+全体を反映不可として扱う（Phase 10.11・10.12と同じ「全体停止方式」の安全設計）。
+
+`--apply`成功後、`title`/`body`/`summary`が更新され、`image_text`/`canva_prompt`/`video_scene`は
+既存の`_apply_derived_fields()`で再計算される。`page_no`/`source_page_no`/`source_image`/
+`layout_instruction`/`notes`/`metadata`および`VERIFIED_OCR_SNAPSHOT.json`自体は変更されない。
+反映前に`editable/backups/..._before_content_brushup.json`へバックアップを作成する。
+
+本文が更新されると、Phase 10.12のデザインJSONが前提としていた文字量・行数と食い違う可能性が
+あるため、`prepare-image-brushup`は生成時点の`lesson_pages.json`のSHA-256を
+`design_manifest.json`の`source_lesson_pages_sha256`として記録するようAIエージェントへ指示し、
+`render-brushup`は現在のハッシュと一致しない場合（本文更新後に古いデザインJSONのまま等）は
+描画を拒否する。
+
+## 教材画像ブラッシュアップ生成（`prepare-image-brushup` / `render-brushup`。Phase 10.12）
+
+`rendered/`（前節）は`source_image`があれば元画像をそのままコピーするだけであり、「ブラッシュアップ済み
+教材画像」ではない。確定済み本文（`editable/lesson_pages.json`）と元画像の視覚情報を使って実際に
+見た目を再設計した画像を生成するのが本機能で、`rendered/`とは別の出力先（`rendered_brushup/`）を使う。
+3段階の導線（`prepare-image-brushup`→AI作業エージェントによるデザイン設計→`render-brushup`）の詳細は
+[`docs/17_image_brushup_workflow.md`](17_image_brushup_workflow.md)を参照。
+
+```text
+output/<output-dir>/
+  brushup_design/
+    AI_IMAGE_BRUSHUP.md      # prepare-image-brushupが生成するAIエージェント向けデザイン指示書
+    README.md                 # brushup_design/の説明（prepare-image-brushupが生成）
+    pages/page_NNN.json       # ページ別デザインJSON（指示書を実行したAIエージェントが作成）
+    progress.json              # 進捗（同上）
+    design_manifest.json       # 全ページの集約manifest（同上）
+    render_report.json/.md     # render-brushupが生成する結果レポート
+    comparison.html            # 元画像とブラッシュアップ画像の比較確認用の自己完結HTML
+  rendered_brushup/
+    page_NNN.png               # ブラッシュアップ済み完成画像（render-brushupが生成）
+```
+
+デザインJSONは教材本文を複製しない。各ブロックは`source_field`（`title`/`body`/`summary`のいずれか）で
+`lesson_pages.json`の値を参照するだけで、`render-brushup`が実際の描画時に本文をそのまま取得する
+（`title`/`summary`はそのまま、`body`は既存の`clean_dialogue_lines()`で話者・台詞ペアへ分解した各行を
+段落として描画）。任意コード・任意HTML・任意CSS・任意PythonをデザインJSONへ埋め込む設計にはなっておらず、
+`schema_version`/`page_no`/`source_image`（パストラバーサル・絶対パス拒否）/`canvas`/`theme`/
+`template`（許可値のみ）/`blocks`（許可type・許可source_fieldのみ）を検証してから描画する。
+
+各ブロックは`line_range`（`source_field`の段落の一部だけを参照。既存行の並べ替え・複製ではない）と、
+`columns: 2`時の`split_at`（列の分割位置を意味区切りで明示）・`column_ratio`（左右の幅配分。既定
+0.5均等）を指定できる。元画像で強調されている部分（大きく太字の問いかけ等）と補足説明・注記とで
+文字サイズ・太さ・箱の有無を変えて情報階層を再現するために使う。文字サイズを分けたいが背景は
+1枚のカードにまとめたい場合は`type: "group"`（複数の子ブロックを1つの共有背景の中へ積み重ねる）
+を使う（実データレビューで、この使い分けをしないと「レイアウト崩しにしかならない」「本文の一部が
+本文の外に浮いて見える」という指摘を受けたための追加。詳細は
+[`docs/17_image_brushup_workflow.md`](17_image_brushup_workflow.md)「5.7 実データレビューで
+判明した設計ルール」参照）。
+
+本文が指定文字サイズで収まらない場合、余白縮小→行間縮小→最小フォントサイズまでの縮小→（bodyブロックに
+限り）2段組みへの変更、の順に調整し、それでも収まらない場合は本文を省略・打ち切りせずページを失敗として
+扱う（`render_report.json`/`.md`に理由を記録し、コマンド全体を非ゼロ終了する）。生成画像が元画像の
+単純コピーでないことをファイルハッシュ・ピクセルデータ比較で機械的に確認する。**`editable/lesson_pages.json`・
+元画像・`assets/`・既存の`rendered/`はいずれも変更しない。**
+
 ## 正データと派生出力の関係
 `lesson_pages.json`（`docs/03_data_format.md`とは別スキーマ）が正データであり、以下の出力はすべてこのファイルから派生生成される。`brushup.md`と`canva_design.md`が同じ`lesson_pages.json`から生成されるため、ページ番号・タイトルは常に一致する。
 
